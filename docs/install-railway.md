@@ -36,13 +36,7 @@ deploy/railway/
 From [railway.app](https://railway.app):
 
 - **New Project** → **Deploy from GitHub repo** → pick this repo.
-- Railway will detect `railway.json` at the repo root only. Since ours is at `deploy/railway/railway.json`, set it manually:
-  - **Service → Settings → Config-as-Code → Config Path:** `deploy/railway/railway.json`
-- Alternatively, skip the config file and set in the dashboard:
-  - **Settings → Source → Root Directory:** `.`
-  - **Settings → Build → Builder:** `Dockerfile`
-  - **Settings → Build → Dockerfile Path:** `deploy/railway/Dockerfile`
-  - **Settings → Deploy → Healthcheck Path:** `/healthz`
+- Set railway.json: **Service → Settings → Config-as-Code → Config Path:** `deploy/railway/railway.json`
 
 ### 2. Attach a persistent volume
 
