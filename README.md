@@ -11,14 +11,23 @@ Design doc: [`docs/superpowers/specs/2026-06-04-newsletter-survey-design.md`](do
 ```markdown
 What did you think of today's newsletter?
 
-[Awesome!](https://survey.sspaeti.duckdns.org/survey/2026-06-04/awesome)
-[Pretty Good](https://survey.sspaeti.duckdns.org/survey/2026-06-04/good)
-[Could be better](https://survey.sspaeti.duckdns.org/survey/2026-06-04/better)
+[Awesome!](https://survey.ssp.sh/survey/2026-06-04/awesome)
+[Pretty Good](https://survey.ssp.sh/survey/2026-06-04/good)
+[Could be better](https://survey.ssp.sh/survey/2026-06-04/better)
+[Worse](https://survey.ssp.sh/survey/2026-06-04/worse)
 ```
 
-Each click records one vote and redirects to a "Thanks!" page. The next
-newsletter can use entirely different `survey_id` and `answer` slugs without
-any code or schema change.
+The path shape is `https://<host>/survey/<survey_id>/<answer>`:
+
+- `<survey_id>` identifies the newsletter issue (e.g. an ISO date like
+  `2026-06-04`, or a slug like `weekly-42`).
+- `<answer>` is whichever rating you want to record for that click
+  (`awesome`, `good`, `better`, `worse`, `meh`, …).
+
+Both slugs are free-form, validated against `^[a-z0-9][a-z0-9_-]{0,63}$`,
+so the next newsletter can use entirely different `survey_id` and `answer`
+slugs without any code or schema change. Each click records one vote and
+redirects to a "Thanks!" page.
 
 ## How votes are deduplicated
 
@@ -91,38 +100,93 @@ Run `make help` for the full target list. Common ones:
 
 ## Query from your laptop
 
-Fastest path:
+### Fastest: rendered tally with bar chart
 
 ```sh
-export SURVEY_QUACK_TOKEN=$(make -s token)    # one-time, fetches over SSH
-make duckdb-connect                            # opens duckdb with `s` attached
+export SURVEY_QUACK_TOKEN='<token from Railway env>'
+export RAILWAY_QUACK_HOST='XXXXX.proxy.rlwy.net'    # your TCP Proxy host
+export RAILWAY_QUACK_PORT='99999'                    # your TCP Proxy port
 ```
 
-Then:
+
+Show all survey result
+```sh
+make survey-result                          # all surveys
+```
+
+Example output — bars scale to each survey's top answer, so within-newsletter
+proportions are visible at a glance:
+
+```
+┌────────────┬─────────┬────────┬────────────────────────────────┐
+│ survey_id  │ answer  │ clicks │             chart              │
+│  varchar   │ varchar │ int64  │            varchar             │
+├────────────┼─────────┼────────┼────────────────────────────────┤
+│ 2026-06-11 │ awesome │     42 │ ██████████████████████████████ │
+│ 2026-06-11 │ good    │     27 │ ███████████████████▎           │
+│ 2026-06-11 │ better  │      8 │ █████▋                         │
+│ 2026-06-04 │ awesome │     38 │ ██████████████████████████████ │
+│ 2026-06-04 │ good    │     22 │ █████████████████▎             │
+│ 2026-06-04 │ better  │     11 │ ████████▋                      │
+│ 2026-06-04 │ worse   │      2 │ █▌                             │
+└────────────┴─────────┴────────┴────────────────────────────────┘
+```
+Or one specific:
+```sh
+make survey-result SURVEY_ID=2026-06-04     # one newsletter only
+```
+
+Looks like this:
+```
+┌────────────┬────────────┬────────┬────────────────────────────────┐
+│ survey_id  │   answer   │ clicks │             chart              │
+│  varchar   │  varchar   │ int64  │            varchar             │
+├────────────┼────────────┼────────┼────────────────────────────────┤
+│ 2026-06-04 │ worse      │      2 │ ██████████████████████████████ │
+│ 2026-06-04 │ best       │      1 │ ███████████████                │
+└────────────┴────────────┴────────┴────────────────────────────────┘
+```
+
+
+### Interactive: ad-hoc SQL on the remote DuckDB
+
+```sh
+make railway-duckdb-connect       # for Railway TCP Proxy host:port
+# — or —
+make duckdb-connect               # for the FreeBSD path with custom DNS
+```
+
+`railway-duckdb-connect` drops you at a duckdb prompt with two helpers
+pre-loaded:
+
+- `remote_votes` — view over the remote `votes` table
+- `rq(sql)` — table macro that runs arbitrary SQL on the remote
 
 ```sql
--- One newsletter's results
-FROM s.votes
-WHERE survey_id = '2026-06-04'
-GROUP BY answer
-ORDER BY count(*) DESC;
+-- Latest 20 clicks
+FROM remote_votes ORDER BY ts DESC LIMIT 20;
 
--- All-time rolling tally
-SELECT survey_id, answer, count(*) AS votes
-FROM s.votes
-GROUP BY ALL
-ORDER BY survey_id DESC, votes DESC;
+-- Filter locally after fetching the table
+FROM remote_votes WHERE survey_id = '2026-06-04';
+
+-- Aggregate on the server, return small result
+FROM rq('SELECT survey_id, answer, count(*) AS n
+         FROM votes GROUP BY ALL
+         ORDER BY survey_id DESC, n DESC');
 ```
 
-Or paste manually:
+> [!NOTE]
+> The Makefile wraps everything in `quack_query` because `ATTACH 'quack:…'`
+> errors with `Binder Error: Catalog "s" does not exist!` in the Quack build
+> shipped with DuckDB 1.5.3 (extension build `1693647`). When the next quack
+> release lands the helpers will switch to a proper `ATTACH`.
 
-```sql
-CREATE SECRET (TYPE quack, TOKEN '<paste your token>');
-ATTACH 'quack:quack.sspaeti.duckdns.org' AS s;
-FROM s.votes ORDER BY ts DESC LIMIT 20;
-```
+### Fallback paths
 
-Fallback if Quack misbehaves: `ssh ti "duckdb /var/db/survey/votes.duckdb -c 'FROM votes'"`.
+- **Inside Railway's container:** open a shell from the dashboard, then
+  `curl https://install.duckdb.org | sh` and
+  `~/.duckdb/cli/latest/duckdb -readonly /var/db/survey/votes.duckdb`.
+- **FreeBSD:** `ssh ti "duckdb /var/db/survey/votes.duckdb -c 'FROM votes'"`.
 
 ## Privacy
 
