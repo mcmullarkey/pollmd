@@ -22,7 +22,7 @@ type Config struct {
 	BlogURL    string
 }
 
-//go:embed thanks.html result.html
+//go:embed thanks.html result.html style.css
 var staticFS embed.FS
 
 // Route patterns. Edit here if the URL shape ever changes — the rest of the
@@ -35,6 +35,7 @@ const (
 	routeResult     = "/result/{id}"          // server-rendered tally page
 	routeThanks     = "/thanks"
 	routeHealth     = "/healthz"
+	routeStyle      = "/style.css" // shared CSS for thanks.html + result.html
 )
 
 // slugRe gates both survey_id and answer. Lowercase alnum, dash, underscore,
@@ -96,15 +97,21 @@ type Server struct {
 	salt   *voter.Salt
 	thanks *template.Template
 	result *template.Template
+	css    []byte // cached at startup, served from routeStyle
 }
 
 func New(cfg Config, st *store.Store) *Server {
+	css, err := staticFS.ReadFile("style.css")
+	if err != nil {
+		panic("embedded style.css missing: " + err.Error())
+	}
 	return &Server{
 		cfg:    cfg,
 		store:  st,
 		salt:   voter.NewSalt(),
 		thanks: template.Must(template.ParseFS(staticFS, "thanks.html")),
 		result: template.Must(template.ParseFS(staticFS, "result.html")),
+		css:    css,
 	}
 }
 
@@ -116,6 +123,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc(routeVote, s.handleSurvey)
 	mux.HandleFunc(routeVoteLegacy, s.handleSurvey)
 	mux.HandleFunc(routeThanks, s.handleThanks)
+	mux.HandleFunc(routeStyle, s.handleStyle)
 	mux.HandleFunc(routeHealth, func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -171,6 +179,20 @@ func (s *Server) handleSurvey(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("vote survey_id=%s answer=%s", surveyID, answer)
 	http.Redirect(w, r, "/thanks?id="+surveyID, http.StatusFound)
+}
+
+func (s *Server) handleStyle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	w.Write(s.css)
 }
 
 func (s *Server) handleThanks(w http.ResponseWriter, r *http.Request) {
