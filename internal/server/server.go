@@ -404,11 +404,14 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// titleAnswer turns a slug like "not-sure" into a display label "Not Sure".
-// Validation upstream guarantees slugs are lower-case ASCII so byte-indexing
-// the first rune of each part is safe.
+// titleAnswer turns a slug like "not-sure" or "could_be_better" into a display
+// label "Not Sure" / "Could Be Better". Splits on both `-` and `_` so either
+// slug style renders cleanly. Validation upstream guarantees slugs are
+// lower-case ASCII so byte-indexing the first rune of each part is safe.
 func titleAnswer(slug string) string {
-	parts := strings.Split(slug, "-")
+	parts := strings.FieldsFunc(slug, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
 	for i, p := range parts {
 		if len(p) > 0 {
 			parts[i] = strings.ToUpper(p[:1]) + p[1:]
@@ -429,10 +432,16 @@ func publicBaseURL(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// clientIP picks the first hop from X-Forwarded-For (set by Caddy) and falls
-// back to RemoteAddr. The IP is only used as one input to the voter hash; it
-// is never persisted.
+// clientIP picks the request's source IP, preferring proxy-set headers over
+// the raw TCP RemoteAddr. The priority matches goatcounter's zhttp/mware.RealIP
+// (and chi's middleware.RealIP): X-Real-IP first (Caddy/NPM set this as a
+// single value), then the leftmost X-Forwarded-For hop (Railway and most cloud
+// edges), then RemoteAddr. The IP is only used as one input to the voter hash;
+// it is never persisted.
 func clientIP(r *http.Request) string {
+	if rip := strings.TrimSpace(r.Header.Get("X-Real-Ip")); rip != "" {
+		return rip
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if i := strings.Index(xff, ","); i > 0 {
 			return strings.TrimSpace(xff[:i])
