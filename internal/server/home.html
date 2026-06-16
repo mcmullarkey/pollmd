@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>pollmd &mdash; minimal newsletter polls in Markdown</title>
+<meta name="description" content="{{.OGDescription}}">
+
+<meta property="og:title" content="{{.OGTitle}}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{.PageURL}}">
+<meta property="og:image" content="{{.OGImageURL}}">
+<meta property="og:description" content="{{.OGDescription}}">
+<meta property="og:site_name" content="pollmd">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@sspaeti">
+<meta name="twitter:title" content="{{.OGTitle}}">
+<meta name="twitter:description" content="{{.OGDescription}}">
+<meta name="twitter:image" content="{{.OGImageURL}}">
+
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="card">
+    <div class="hero">
+      <img class="logo" src="https://www.ssp.sh/brain/logo_ssp_main.png" alt="sspaeti.com logo">
+      <h1>pollmd</h1>
+      <p class="subtitle">Minimal newsletter polls in Markdown.</p>
+    </div>
+
+    <p>
+      A ~200-line Go service that records anonymous reader ratings into a
+      single <a href="https://ssp.sh/brain/duckdb">DuckDB</a> file.
+      Per-newsletter, per-answer, no cookies, no JS. Query the results
+      from your laptop over <a href="https://duckdb.org/docs/stable/core_extensions/quack/overview.html">Quack</a>.
+    </p>
+
+    <div class="answers">
+      <a class="answer-link" href="{{.DocsURL}}">Docs &rarr;</a>
+      <a class="answer-link" href="{{.GitHubURL}}">GitHub &rarr;</a>
+    </div>
+
+    <p class="muted">
+      No cookies, no tracking. Each request is hashed with a salt that
+      rotates every midnight UTC.
+    </p>
+  </main>
+</body>
+</html>

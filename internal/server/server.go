@@ -22,7 +22,7 @@ type Config struct {
 	BlogURL    string
 }
 
-//go:embed thanks.html result.html landing.html style.css ogimage.png
+//go:embed thanks.html result.html landing.html home.html style.css ogimage.png
 var staticFS embed.FS
 
 // Route patterns. Edit here if the URL shape ever changes — the rest of the
@@ -35,10 +35,19 @@ const (
 	routeResult        = "/result/{id}"          // server-rendered tally page
 	routeLanding       = "/{id}"                 // landing page with answer buttons for registered surveys
 	routeLandingLegacy = "/survey/{id}"          // alias matching the explicit /survey/ form the user might type
+	routeHome          = "/{$}"                  // root explainer page; {$} anchors to "/" only so /{id} stays distinct
 	routeThanks        = "/thanks"
 	routeHealth        = "/healthz"
 	routeStyle         = "/style.css"    // shared CSS for thanks.html + result.html
 	routeOGImage       = "/og-image.png" // generic social-card image for result.html
+)
+
+// Public URLs the root home page links to. Hardcoded rather than wired
+// through Config because there's exactly one canonical pollmd deployment;
+// fork/reuse cases can promote these to env vars later.
+const (
+	homeDocsURL   = "https://pollmd.ssp.sh/"
+	homeGitHubURL = "https://github.com/sspaeti/pollmd"
 )
 
 // slugRe gates both survey_id and answer. Lowercase alnum, dash, underscore,
@@ -101,6 +110,7 @@ type Server struct {
 	thanks  *template.Template
 	result  *template.Template
 	landing *template.Template
+	home    *template.Template
 	css     []byte // cached at startup, served from routeStyle
 	ogImage []byte // cached at startup, served from routeOGImage
 }
@@ -121,6 +131,7 @@ func New(cfg Config, st *store.Store) *Server {
 		thanks:  template.Must(template.ParseFS(staticFS, "thanks.html")),
 		result:  template.Must(template.ParseFS(staticFS, "result.html")),
 		landing: template.Must(template.ParseFS(staticFS, "landing.html")),
+		home:    template.Must(template.ParseFS(staticFS, "home.html")),
 		css:     css,
 		ogImage: ogImage,
 	}
@@ -135,6 +146,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc(routeVoteLegacy, s.handleSurvey)
 	mux.HandleFunc(routeLanding, s.handleLanding)
 	mux.HandleFunc(routeLandingLegacy, s.handleLanding)
+	mux.HandleFunc(routeHome, s.handleHome)
 	mux.HandleFunc(routeThanks, s.handleThanks)
 	mux.HandleFunc(routeStyle, s.handleStyle)
 	mux.HandleFunc(routeOGImage, s.handleOGImage)
@@ -418,6 +430,46 @@ func titleAnswer(slug string) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// homePageData is the view-model for home.html — the root explainer page
+// at /. Only externally-visible URLs need to be passed in; the marketing
+// copy lives in the template.
+type homePageData struct {
+	PageURL       string
+	OGImageURL    string
+	OGTitle       string
+	OGDescription string
+	DocsURL       string
+	GitHubURL     string
+}
+
+// handleHome serves the root explainer page at /. The {$} anchor on
+// routeHome ensures this never shadows /{id} or /{id}/{answer}; the
+// shadowing test in server_test.go pins that — don't drop the anchor.
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	base := publicBaseURL(r)
+	data := homePageData{
+		PageURL:       base + "/",
+		OGImageURL:    base + routeOGImage,
+		OGTitle:       "pollmd — minimal newsletter polls in Markdown",
+		OGDescription: "A ~200-line Go service that records anonymous newsletter reader ratings into a DuckDB file. No cookies, no JS.",
+		DocsURL:       homeDocsURL,
+		GitHubURL:     homeGitHubURL,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := s.home.Execute(w, data); err != nil {
+		log.Printf("home template: %v", err)
+	}
 }
 
 // publicBaseURL returns the scheme+host that an external client used to reach
