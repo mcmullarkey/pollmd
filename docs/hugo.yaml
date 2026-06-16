@@ -1,0 +1,70 @@
+# Hugo configuration file
+title: pollmd
+
+# Production base URL. The deploy-docs workflow overrides this with the
+# GitHub Pages URL while the custom domain is provisioning.
+baseURL: "https://pollmd.ssp.sh/"
+
+canonifyURLs: false
+
+# Disable RSS generation to avoid template issues
+disableKinds: ["RSS"]
+
+# import hextra as module
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+markup:
+  # allow raw html
+  goldmark:
+    renderer:
+      unsafe: true
+    parser:
+      attribute:
+        block: true
+      autoHeadingID: true
+      autoHeadingIDType: github
+
+  # enable hextra syntax highlight
+  highlight:
+    noClasses: false
+
+  tableOfContents:
+    startLevel: 2
+    endLevel: 6
+    ordered: false
+
+menu:
+  main:
+    - name: Documentation
+      pageRef: /docs
+      weight: 1
+    - name: Search
+      weight: 2
+      params:
+        type: search
+    - name: GitHub
+      weight: 3
+      url: "https://github.com/sspaeti/pollmd"
+      params:
+        icon: github
+
+params:
+  description: Minimal newsletter polls in Markdown. A ~200-line Go service that records anonymous reader ratings into a single DuckDB file.
+
+  navbar:
+    displayTitle: true
+    displayLogo: false
+
+  footer:
+    enable: true
+    displayCopyright: false
+    displayPoweredBy: false
+
+  theme:
+    default: system
+    displayToggle: true
+
+  editURL:
+    enable: false

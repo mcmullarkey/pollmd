@@ -1,7 +1,12 @@
+---
+title: FreeBSD
+weight: 30
+---
+
 # FreeBSD install
 
 This is the path I actually run on `ti.sspaeti.duckdns.org`. If you're starting
-fresh on Linux, the [Linux guide](install-linux.md) is much shorter — FreeBSD
+fresh on Linux, the [Linux guide](./linux/) is much shorter — FreeBSD
 needs a source build of DuckDB because the upstream project ships no FreeBSD
 binaries and `duckdb-go-bindings/v2` covers only darwin/linux/windows.
 

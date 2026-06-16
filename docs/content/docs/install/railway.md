@@ -1,4 +1,7 @@
-# Railway install
+---
+title: Railway
+weight: 10
+---
 
 Single Railway service, single container, both ports exposed:
 

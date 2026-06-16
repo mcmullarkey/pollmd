@@ -1,3 +1,8 @@
+---
+title: Linux (EC2 / DO / Hetzner)
+weight: 20
+---
+
 # Linux install (EC2, DO, Hetzner, anywhere)
 
 

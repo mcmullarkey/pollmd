@@ -1,0 +1,41 @@
+{{- /*
+  readme-section: pull a heading-delimited slice out of the project README so
+  the docs site doesn't duplicate content. Default source is README-link.md —
+  a symlink to ../README.md (Hugo's readFile is sandboxed to the project, so
+  the symlink puts the canonical README inside the project tree).
+
+  Usage:
+    {{< readme-section start="## Features" end="## Architecture" >}}
+    {{< readme-section file="OTHER-FILE.md" start="..." end="..." >}}
+
+  Without start/end, the whole file is rendered. `start` and `end` are matched
+  as substrings of full lines. The start line is included; the end line is
+  not, so consecutive sections can chain cleanly (each one's end is the next
+  one's start).
+*/ -}}
+{{- $file := .Get "file" | default "README-link.md" -}}
+{{- $start := .Get "start" -}}
+{{- $end := .Get "end" -}}
+{{- $content := readFile $file -}}
+
+{{- if and $start $end -}}
+  {{- $lines := split $content "\n" -}}
+  {{- $inSection := false -}}
+  {{- $output := slice -}}
+
+  {{- range $lines -}}
+    {{- if strings.Contains . $start -}}
+      {{- $inSection = true -}}
+    {{- else if and $inSection (strings.Contains . $end) -}}
+      {{- $inSection = false -}}
+    {{- end -}}
+
+    {{- if $inSection -}}
+      {{- $output = $output | append . -}}
+    {{- end -}}
+  {{- end -}}
+
+  {{- delimit $output "\n" | markdownify -}}
+{{- else -}}
+  {{- $content | markdownify -}}
+{{- end -}}
