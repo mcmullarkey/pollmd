@@ -1,20 +1,16 @@
 ---
-title: Overview
+title: Overview & Philosophy
 weight: 0
 ---
 
-A minimal Go service that records anonymous newsletter reader ratings into a
-single [DuckDB](https://ssp.sh/brain/duckdb) file. Per-newsletter,
-per-answer, no cookies, no JS. Query the results from your laptop over Quack.
+Pollmd is my minimal (newsletter) survey with dynamic questions right from Markdown (links) with one time installation with [DuckDB Quack Protocol](https://www.ssp.sh/brain/quack-protocol-duckdb).
 
-The whole thing is around 200 lines of Go and one DuckDB file. Read the
-source in an afternoon, fork it if you want different behaviour.
+I wanted to **self host** it on my servers and use Markdown, that's why I used the opportunity to try Quack Protocol from DuckDB and see how far I can get.
 
-## Why pollmd?
+
 
 {{< readme-section start="## Why pollmd?" end="## Features" >}}
 
-## Features
 
 {{< readme-section start="## Features" end="## What it looks like in a newsletter" >}}
 

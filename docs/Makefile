@@ -2,10 +2,10 @@
 
 .DEFAULT_GOAL := serve
 
-## serve: serve Hugo docs site locally at http://localhost:1311
+## serve: serve Hugo docs site locally at http://localhost:1310
 serve:
 	@echo "Starting Hugo development server..."
-	hugo server -D --port 1311
+	hugo server -D --port 1310
 
 ## build: build Hugo docs site to public/
 build:

@@ -253,7 +253,7 @@ require github.com/imfing/hextra v0.12.2 // indirect
 
 ### `Makefile`
 
-Copy neomd's verbatim — `serve` (port 1311), `build`, `clean`, `help`.
+Copy neomd's verbatim — `serve` (port 1310), `build`, `clean`, `help`.
 
 ### `layouts/shortcodes/readme-section.html`
 
@@ -498,7 +498,7 @@ Until DNS is set, the workflow still runs and the docs are reachable at
 
 - `cd docs && hugo --gc --minify` runs clean (no template errors, no
   broken-link warnings).
-- `cd docs && make serve` boots Hugo at `localhost:1311` and renders
+- `cd docs && make serve` boots Hugo at `localhost:1310` and renders
   every page. Visual check: home, install pickers, each install guide,
   usage, architecture (Mermaid renders), querying, privacy, FAQ.
 - Shortcode pulls: edit a section in `README.md`, refresh docs page,

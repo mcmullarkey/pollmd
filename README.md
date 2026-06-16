@@ -10,61 +10,24 @@ Docs site: **[pollmd.ssp.sh](https://pollmd.ssp.sh)**.
 
 ## Why pollmd?
 
-- **Free and self-hosted.** Paid survey tools (Typeform, Polldaddy,
-  SurveyMonkey) charge per-response or per-month after a small free tier.
-  pollmd costs whatever your Railway / EC2 / Hetzner / FreeBSD box already
-  costs — typically nothing extra. The DuckDB file grows by ~50 bytes per
-  vote, so storage is a rounding error.
-- **Markdown-native.** Polls are plain `[Label](URL)` links. They render in
-  every newsletter platform that supports Markdown — no embeds, no
-  JavaScript, no iframes, no platform lock-in. Your readers click a link
-  the same way they click every other link in your newsletter.
-- **Tiny.** ~200 lines of Go, one binary, one DuckDB file. Read the source
-  in an afternoon. Fork it if you want different behaviour.
-- **Privacy by construction.** No cookies, no JavaScript on the vote page,
-  no fingerprinting. IP and User-Agent feed a hashed dedup key with a salt
-  that rotates every midnight UTC; the salt is never persisted. After
-  rotation, yesterday's hashes can't be reproduced — even with access to
-  server logs.
-- **Queryable with SQL.** The CSS bar-chart tally is nice, but the
-  underlying DuckDB file is one `quack_query` away from any analysis you
-  want to do — joins against your subscriber list, time-of-day patterns,
-  whatever you can write in SQL.
+- **Free and self-hosted.** Paid minimal survey tools (Tally) charge per-response or per-month after a small free tier. pollmd costs whatever your Railway / EC2 / Hetzner / FreeBSD box already costs — typically nothing extra. The DuckDB file grows by ~50 bytes per vote, so storage is a rounding error.
+- **Markdown-native.** Polls are plain `[Label](URL)` links. They render in every newsletter platform that supports Markdown — no embeds, no JavaScript, no iframes, no platform lock-in. Your readers click a link the same way they click every other link in your newsletter. **Tiny.** ~200 lines of Go, one binary, one DuckDB file. Read the source in an afternoon. Fork it if you want different behaviour.
+- **Privacy by construction.** No cookies, no JavaScript on the vote page, no fingerprinting. IP and User-Agent feed a hashed dedup key with a salt that rotates every midnight UTC; the salt is never persisted. After rotation, yesterday's hashes can't be reproduced — even with access to server logs.
+- **Queryable with SQL.** The CSS bar-chart tally is nice, but the underlying DuckDB file is one `quack_query` away from any analysis you want to do — joins against your subscriber list, time-of-day patterns, whatever you can write in SQL.
 
 ## Features
 
-- **Markdown link voting** — `[Label](https://<host>/<survey_id>/<answer>)`,
-  one click records one vote, redirects to a "Thanks!" page.
-- **Per-newsletter answer slugs** — invent any slugs you want per issue;
-  the regex `^[a-z0-9][a-z0-9_-]{0,63}$` is the only constraint, no schema
-  change, no allowlist required.
-- **Optional answer locking** — `make survey-create SURVEY_ID=… ANSWERS=…`
-  registers a per-survey allowlist. URL-fuzzers and curious readers see
-  200s but nothing gets recorded; the rejection is logged with
-  `answer-reject survey_id=… answer=…`.
-- **Public landing page per survey** — `/{id}` renders a button per
-  allowed answer for surveys registered via `survey-create`, so you can
-  share one URL in a tweet/post instead of all four markdown links.
-- **Server-rendered result page** — `/result/{id}` renders a CSS bar chart
-  marked `noindex`. Whoever knows the slug can view; no DuckDB-WASM, no
-  SQL endpoint exposed to the browser.
-- **Privacy-respecting dedup** — `sha256(ip || ua || daily_salt ||
-  survey_id)[:16]`. Salt is 32 random bytes, in-memory, rotated at
-  midnight UTC, regenerated on every restart.
-- **Bot filter** — substring match against ~40 User-Agent patterns
-  (link unfurlers, search crawlers, RSS readers, security scanners,
-  Safe Links). Empty UAs also skipped.
-- **HEAD-prefetch tolerance** — Microsoft Safe Links and Gmail
-  prefetchers get a 200 with no vote recorded.
-- **One process, single writer** — Go HTTP server and Quack remote-read
-  listener share one DuckDB connection. `SetMaxOpenConns(1)` is
-  load-bearing.
-- **Quack admin channel** — `make survey-result`, `make survey-reset`,
-  ad-hoc SQL all flow over Quack on a separate port, token-authenticated.
-  No SQL endpoint on the public HTTPS path.
-- **Three deploy paths** — Railway (Docker + persistent volume),
-  Linux/EC2/Hetzner (~10 lines + systemd), FreeBSD (the install script
-  that runs on `ti`).
+- **Markdown link voting** — `[Label](https://<host>/<survey_id>/<answer>)`, one click records one vote, redirects to a "Thanks!" page.
+- **Per-newsletter answer slugs** — invent any slugs you want per issue; the regex `^[a-z0-9][a-z0-9_-]{0,63}$` is the only constraint, no schema change, no allowlist required.
+- **Optional answer locking** — `make survey-create SURVEY_ID=… ANSWERS=…` registers a per-survey allowlist. URL-fuzzers and curious readers see 200s but nothing gets recorded; the rejection is logged with `answer-reject survey_id=… answer=…`.
+- **Public landing page per survey** — `/{id}` renders a button per allowed answer for surveys registered via `survey-create`, so you can share one URL in a tweet/post instead of all four markdown links.
+- **Server-rendered result page** — `/result/{id}` renders a CSS bar chart marked `noindex`. Whoever knows the slug can view; no DuckDB-WASM, no SQL endpoint exposed to the browser.
+- **Privacy-respecting dedup** — `sha256(ip || ua || daily_salt || survey_id)[:16]`. Salt is 32 random bytes, in-memory, rotated at midnight UTC, regenerated on every restart.
+- **Bot filter** — substring match against ~40 User-Agent patterns (link unfurlers, search crawlers, RSS readers, security scanners, Safe Links). Empty UAs also skipped.
+- **HEAD-prefetch tolerance** — Microsoft Safe Links and Gmail prefetchers get a 200 with no vote recorded.
+- **One process, single writer** — Go HTTP server and Quack remote-read listener share one DuckDB connection. `SetMaxOpenConns(1)` is load-bearing.
+- **Quack admin channel** — `make survey-result`, `make survey-reset`, ad-hoc SQL all flow over Quack on a separate port, token-authenticated. No SQL endpoint on the public HTTPS path.
+- **Three deploy paths** — Railway (Docker + persistent volume), Linux/EC2/Hetzner (~10 lines + systemd), FreeBSD (the install script that runs on `ti`).
 
 ## What it looks like in a newsletter
 

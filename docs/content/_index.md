@@ -12,7 +12,7 @@ toc: false
 <br>
 <div class="hx-mb-12">
 {{< hextra/hero-subtitle >}}
-  A ~200-line Go service that records anonymous reader ratings into a&nbsp;<br class="sm:hx-block hx-hidden" />single DuckDB file. Per-newsletter, per-answer, no cookies, no JS.
+  A ~200-line Go service that records anonymous poll &nbsp;<br class="sm:hx-block hx-hidden" />into a single DuckDB file, querying with Quack Protocol.
 {{< /hextra/hero-subtitle >}}
 </div>
 <br>

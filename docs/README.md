@@ -8,7 +8,7 @@ Most page content is pulled from the project root `README.md` through the
 source of truth.
 
 ```sh
-make serve     # http://localhost:1311
+make serve     # http://localhost:1310
 make build     # static build into public/
 make clean
 ```
