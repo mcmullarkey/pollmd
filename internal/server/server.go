@@ -22,7 +22,7 @@ type Config struct {
 	BlogURL    string
 }
 
-//go:embed thanks.html result.html landing.html home.html style.css ogimage.png
+//go:embed thanks.html result.html landing.html home.html style.css ogimage.png ogimage-q.png
 var staticFS embed.FS
 
 // Route patterns. Edit here if the URL shape ever changes — the rest of the
@@ -39,7 +39,8 @@ const (
 	routeThanks        = "/thanks"
 	routeHealth        = "/healthz"
 	routeStyle         = "/style.css"    // shared CSS for thanks.html + result.html
-	routeOGImage       = "/og-image.png" // generic social-card image for result.html
+	routeOGImage       = "/og-image.png"  // social-card image for landing.html + result.html
+	routeOGImage2      = "/og-image-q.png" // social-card image for home.html (root /)
 )
 
 // Public URLs the root home page links to. Hardcoded rather than wired
@@ -111,8 +112,9 @@ type Server struct {
 	result  *template.Template
 	landing *template.Template
 	home    *template.Template
-	css     []byte // cached at startup, served from routeStyle
-	ogImage []byte // cached at startup, served from routeOGImage
+	css      []byte // cached at startup, served from routeStyle
+	ogImage  []byte // cached at startup, served from routeOGImage
+	ogImage2 []byte // cached at startup, served from routeOGImage2 (home page card)
 }
 
 func New(cfg Config, st *store.Store) *Server {
@@ -124,16 +126,21 @@ func New(cfg Config, st *store.Store) *Server {
 	if err != nil {
 		panic("embedded ogimage.png missing: " + err.Error())
 	}
+	ogImage2, err := staticFS.ReadFile("ogimage-q.png")
+	if err != nil {
+		panic("embedded ogimage-q.png missing: " + err.Error())
+	}
 	return &Server{
-		cfg:     cfg,
-		store:   st,
-		salt:    voter.NewSalt(),
-		thanks:  template.Must(template.ParseFS(staticFS, "thanks.html")),
-		result:  template.Must(template.ParseFS(staticFS, "result.html")),
-		landing: template.Must(template.ParseFS(staticFS, "landing.html")),
-		home:    template.Must(template.ParseFS(staticFS, "home.html")),
-		css:     css,
-		ogImage: ogImage,
+		cfg:      cfg,
+		store:    st,
+		salt:     voter.NewSalt(),
+		thanks:   template.Must(template.ParseFS(staticFS, "thanks.html")),
+		result:   template.Must(template.ParseFS(staticFS, "result.html")),
+		landing:  template.Must(template.ParseFS(staticFS, "landing.html")),
+		home:     template.Must(template.ParseFS(staticFS, "home.html")),
+		css:      css,
+		ogImage:  ogImage,
+		ogImage2: ogImage2,
 	}
 }
 
@@ -150,6 +157,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc(routeThanks, s.handleThanks)
 	mux.HandleFunc(routeStyle, s.handleStyle)
 	mux.HandleFunc(routeOGImage, s.handleOGImage)
+	mux.HandleFunc(routeOGImage2, s.handleOGImage2)
 	mux.HandleFunc(routeHealth, func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -253,6 +261,20 @@ func (s *Server) handleOGImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Write(s.ogImage)
+}
+
+func (s *Server) handleOGImage2(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	w.Write(s.ogImage2)
 }
 
 func (s *Server) handleThanks(w http.ResponseWriter, r *http.Request) {
@@ -459,7 +481,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	base := publicBaseURL(r)
 	data := homePageData{
 		PageURL:       base + "/",
-		OGImageURL:    base + routeOGImage,
+		OGImageURL:    base + routeOGImage2,
 		OGTitle:       "pollmd — minimal newsletter polls in Markdown",
 		OGDescription: "A ~200-line Go service that records anonymous newsletter reader ratings into a DuckDB file. No cookies, no JS.",
 		DocsURL:       homeDocsURL,
