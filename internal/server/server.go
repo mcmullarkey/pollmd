@@ -320,17 +320,21 @@ func (s *Server) handleThanks(w http.ResponseWriter, r *http.Request) {
 }
 
 // tallyRow is the view-model passed to result.html — Tally as it comes out
-// of the store, plus a PercentOfMax we computed for the CSS bar width.
+// of the store, plus a PercentOfMax we computed for the CSS bar width, and
+// Voters (voter names for named-mode surveys).
 type tallyRow struct {
 	Answer       string
 	Clicks       int
 	PercentOfMax int
+	Voters       []string // voter names, empty for anonymous-mode surveys
 }
 
 type resultPageData struct {
 	SurveyID      string
 	Tallies       []tallyRow
 	TotalVotes    int
+	Mode          string // "anonymous" or "named"
+	MutedText     string // mode-aware disclaimer
 	SiteURL       string
 	PageURL       string // absolute URL of this result page, for og:url
 	OGImageURL    string // absolute URL of the social-card image, for og:image
@@ -361,6 +365,24 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check mode and fetch voter names if named
+	mode, err := s.store.GetSurveyMode(surveyID)
+	if err != nil {
+		log.Printf("survey mode: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	var namesByAnswer map[string][]string
+	if mode == "named" {
+		namesByAnswer, err = s.store.VoteNamesByAnswer(surveyID)
+		if err != nil {
+			log.Printf("vote names: survey_id=%s err=%v", surveyID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	total, top := 0, 0
 	for _, t := range rows {
 		total += t.Clicks
@@ -374,7 +396,20 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 		if top > 0 {
 			pct = (t.Clicks * 100) / top
 		}
-		view[i] = tallyRow{Answer: t.Answer, Clicks: t.Clicks, PercentOfMax: pct}
+		view[i] = tallyRow{
+			Answer:       t.Answer,
+			Clicks:       t.Clicks,
+			PercentOfMax: pct,
+			Voters:       namesByAnswer[t.Answer],
+		}
+	}
+
+	mutedText := "Live tally from the poll database. Each vote was hashed anonymously " +
+		"with a salt that rotates every day at midnight UTC, so individual " +
+		"voters can't be tied to clicks."
+	if mode == "named" {
+		mutedText = "Live tally from the poll database. Voters chose to show " +
+			"their name alongside their vote."
 	}
 
 	base := publicBaseURL(r)
@@ -382,6 +417,8 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 		SurveyID:      surveyID,
 		Tallies:       view,
 		TotalVotes:    total,
+		Mode:          mode,
+		MutedText:     mutedText,
 		SiteURL:       s.cfg.SiteURL,
 		PageURL:       base + r.URL.Path,
 		OGImageURL:    base + routeOGImage,

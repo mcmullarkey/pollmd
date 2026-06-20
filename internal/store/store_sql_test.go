@@ -181,6 +181,74 @@ func TestGetSurveyMode(t *testing.T) {
 	}
 }
 
+func TestVoteNamesByAnswer(t *testing.T) {
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// Create schema with voter_name column
+	if _, err := db.Exec(`CREATE TABLE votes (
+		ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		survey_id VARCHAR NOT NULL,
+		answer VARCHAR NOT NULL,
+		voter VARCHAR NOT NULL,
+		voter_name VARCHAR,
+		PRIMARY KEY (survey_id, voter)
+	)`); err != nil {
+		t.Fatalf("create votes: %v", err)
+	}
+
+	s := &Store{db: db}
+
+	// Insert votes: 2 on "a" (Mallory, Bob), 1 on "b" (Alice), 1 on "a" (empty)
+	votes := []struct {
+		answer string
+		voter  string
+		name   string
+	}{
+		{"a", "v1", "Mallory"},
+		{"a", "v2", "Bob"},
+		{"b", "v3", "Alice"},
+		{"a", "v4", ""},
+	}
+	for _, v := range votes {
+		if err := s.RecordVote("s1", v.answer, v.voter, v.name); err != nil {
+			t.Fatalf("RecordVote: %v", err)
+		}
+	}
+
+	result, err := s.VoteNamesByAnswer("s1")
+	if err != nil {
+		t.Fatalf("VoteNamesByAnswer: %v", err)
+	}
+
+	// Check answer "a" has "Bob" and "Mallory" (alphabetical)
+	aVoters := result["a"]
+	if len(aVoters) != 2 {
+		t.Fatalf("answer 'a': expected 2 voters, got %d: %v", len(aVoters), aVoters)
+	}
+	if aVoters[0] != "Bob" || aVoters[1] != "Mallory" {
+		t.Fatalf("answer 'a': expected [Bob Mallory], got %v", aVoters)
+	}
+
+	// Check answer "b" has "Alice"
+	bVoters := result["b"]
+	if len(bVoters) != 1 || bVoters[0] != "Alice" {
+		t.Fatalf("answer 'b': expected [Alice], got %v", bVoters)
+	}
+
+	// Check unknown survey returns empty map
+	empty, err := s.VoteNamesByAnswer("nonexistent")
+	if err != nil {
+		t.Fatalf("VoteNamesByAnswer(nonexistent): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected empty map, got %v", empty)
+	}
+}
+
 // Sanity check the upsert statement against the bundled DuckDB version.
 func TestUpsertCurrentTimestamp(t *testing.T) {
 	db, err := sql.Open("duckdb", ":memory:")

@@ -270,6 +270,33 @@ func (s *Store) VoteNames(surveyID string) (map[string]string, error) {
 	return names, rows.Err()
 }
 
+// VoteNamesByAnswer returns non-empty voter names grouped by answer for a survey.
+// Names are sorted alphabetically within each answer. Returns an empty map for
+// surveys with no votes or no named votes.
+func (s *Store) VoteNamesByAnswer(surveyID string) (map[string][]string, error) {
+	const q = `
+		SELECT answer, voter_name
+		FROM votes
+		WHERE survey_id = ? AND voter_name IS NOT NULL AND voter_name != ''
+		ORDER BY answer, voter_name
+	`
+	rows, err := s.db.Query(q, surveyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string][]string)
+	for rows.Next() {
+		var answer, name string
+		if err := rows.Scan(&answer, &name); err != nil {
+			return nil, err
+		}
+		out[answer] = append(out[answer], name)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) TallyBySurvey(surveyID string) ([]Tally, error) {
 	const q = `
 		SELECT answer, count(*) AS clicks

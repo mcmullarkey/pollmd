@@ -37,6 +37,11 @@
         <span class="answer">{{.Answer}}</span>
         <div class="bar-track"><div class="bar-fill" style="width: {{.PercentOfMax}}%"></div></div>
         <span class="count">{{.Clicks}}</span>
+        {{if .Voters}}
+        <div class="voters">
+          {{range .Voters}}<span class="voter-name">{{.}}</span>{{end}}
+        </div>
+        {{end}}
       </div>
       {{end}}
     </div>
@@ -47,11 +52,7 @@
     <p class="links">
       <a class="back-link" href="{{.SiteURL}}">Back to site &rarr;</a>
     </p>
-    <p class="muted">
-      Live tally from the poll database. Each vote was hashed anonymously
-      with a salt that rotates every day at midnight UTC, so individual
-      voters can&rsquo;t be tied to clicks.
-    </p>
+    <p class="muted">{{.MutedText}}</p>
     <p class="footer-credit">
       Created with <a href="https://github.com/sspaeti/pollmd" rel="noopener">pollmd</a>
     </p>

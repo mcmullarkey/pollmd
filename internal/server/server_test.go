@@ -481,6 +481,142 @@ func TestAdminReset(t *testing.T) {
 	}
 }
 
+// TestHandleResultNamedMode verifies voter names appear on the results page
+// for named-mode surveys, with correct cross-answer isolation.
+func TestHandleResultNamedMode(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Create named-mode survey
+	s.store.UpsertSurvey("named-poll", "a,b", "named")
+
+	// Record votes with names
+	s.store.RecordVote("named-poll", "a", "voter1", "Mallory")
+	s.store.RecordVote("named-poll", "a", "voter2", "Bob")
+	s.store.RecordVote("named-poll", "b", "voter3", "Alice")
+
+	req := httptest.NewRequest(http.MethodGet, "/result/named-poll", nil)
+	req.SetPathValue("id", "named-poll")
+	rec := httptest.NewRecorder()
+	s.handleResult(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// All names present
+	for _, name := range []string{"Mallory", "Bob", "Alice"} {
+		if !strings.Contains(body, name) {
+			t.Errorf("expected name %q in body", name)
+		}
+	}
+
+	// No "hashed anonymously" text (named mode)
+	if strings.Contains(body, "hashed anonymously") {
+		t.Error("named mode should not say 'hashed anonymously'")
+	}
+
+	// Voters class present
+	if !strings.Contains(body, "voter-name") {
+		t.Error("expected voter-name class in body")
+	}
+}
+
+// TestHandleResultAnonymousMode verifies anonymous-mode results page
+// shows no voter names.
+func TestHandleResultAnonymousMode(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Create anonymous survey (default)
+	s.store.UpsertSurvey("anon-poll", "a,b", "anonymous")
+
+	// Record votes with names (should be ignored on display)
+	s.store.RecordVote("anon-poll", "a", "voter1", "Mallory")
+	s.store.RecordVote("anon-poll", "b", "voter2", "Bob")
+
+	req := httptest.NewRequest(http.MethodGet, "/result/anon-poll", nil)
+	req.SetPathValue("id", "anon-poll")
+	rec := httptest.NewRecorder()
+	s.handleResult(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+
+	// No voter names
+	if strings.Contains(body, "Mallory") || strings.Contains(body, "Bob") {
+		t.Error("anonymous mode should not show voter names")
+	}
+
+	// "hashed anonymously" text present
+	if !strings.Contains(body, "hashed anonymously") {
+		t.Error("anonymous mode should say 'hashed anonymously'")
+	}
+}
+
+// TestHandleResultNoVotes verifies the empty state.
+func TestHandleResultNoVotes(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	s.store.UpsertSurvey("empty-poll", "a,b", "named")
+
+	req := httptest.NewRequest(http.MethodGet, "/result/empty-poll", nil)
+	req.SetPathValue("id", "empty-poll")
+	rec := httptest.NewRecorder()
+	s.handleResult(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "No votes recorded yet") {
+		t.Error("expected empty state message")
+	}
+}
+
+// TestHandleResultXSS verifies Go html/template auto-escaping.
+func TestHandleResultXSS(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	s.store.UpsertSurvey("xss-poll", "a,b", "named")
+	s.store.RecordVote("xss-poll", "a", "voter1", "<script>alert(1)</script>")
+
+	req := httptest.NewRequest(http.MethodGet, "/result/xss-poll", nil)
+	req.SetPathValue("id", "xss-poll")
+	rec := httptest.NewRecorder()
+	s.handleResult(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if strings.Contains(body, "<script>") && !strings.Contains(body, "&lt;") {
+		t.Error("XSS: script tag not escaped. Body contains raw <script>")
+	}
+	if !strings.Contains(body, "&lt;script&gt;") {
+		t.Error("expected escaped script tag in body")
+	}
+}
+
+// TestHandleResultHeadMethod verifies HEAD on results page.
+func TestHandleResultHeadMethod(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+	req := httptest.NewRequest(http.MethodHead, "/result/test", nil)
+	rec := httptest.NewRecorder()
+	s.handleResult(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want 200", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Errorf("HEAD body length = %d, want 0", rec.Body.Len())
+	}
+}
+
 func TestAdminDelete(t *testing.T) {
 	s := newTestServerWithStore(t, "test-token")
 
