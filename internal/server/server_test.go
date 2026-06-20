@@ -287,6 +287,33 @@ func TestAdminCreateInvalidSlug(t *testing.T) {
 	}
 }
 
+func TestAdminCreateMethodNotAllowed(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// GET to POST-only route → handler returns 405
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", rec.Code)
+	}
+}
+
+func TestAdminCreateTokenInQueryParam(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+	body := url.Values{"survey_id": {"x"}, "answers": {"a"}}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys?token=test-token", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// No Authorization header — token is only in query param
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (token in query param not accepted)", rec.Code)
+	}
+}
+
 func TestAdminResetUnauthorized(t *testing.T) {
 	s := newTestServerWithStore(t, "test-token")
 

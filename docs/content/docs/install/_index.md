@@ -13,4 +13,6 @@ platform you actually run on.
     subtitle="Prebuilt `libduckdb` in the Go bindings, ~10 lines of shell + systemd. Fits any cloud or VPS." >}}
   {{< card link="./freebsd/" title="FreeBSD"
     subtitle="What I run on `ti`. From-source DuckDB build (~20 min) because upstream ships no FreeBSD binaries." >}}
+  {{< card link="./render/" title="Render"
+    subtitle="Blueprint deploy with Docker + persistent disk. HTTP admin endpoints instead of Quack." >}}
 {{< /cards >}}
