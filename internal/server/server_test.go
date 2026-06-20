@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -635,5 +636,328 @@ func TestAdminDelete(t *testing.T) {
 	answers, _ := s.store.GetSurveyAnswers("delete-test")
 	if answers != nil {
 		t.Fatal("survey should have been deleted")
+	}
+}
+
+func TestAdminListSurveys(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Create two surveys, one with votes
+	s.store.UpsertSurvey("poll-1", "a,b", "named")
+	s.store.UpsertSurvey("poll-2", "c,d", "anonymous")
+	s.store.RecordVote("poll-1", "a", "v1", "Alice")
+	s.store.RecordVote("poll-1", "b", "v2", "Bob")
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var items []map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("got %d items, want 2", len(items))
+	}
+
+	// poll-1 (most recent due to ORDER BY created_at DESC) should have vote_count=2
+	if items[0]["survey_id"] == "poll-1" {
+		vc := int(items[0]["vote_count"].(float64))
+		if vc != 2 {
+			t.Errorf("poll-1 vote_count = %d, want 2", vc)
+		}
+	}
+}
+
+func TestAdminListSurveysEmpty(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminList(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	body := strings.TrimSpace(rec.Body.String())
+	if body != "[]" {
+		t.Fatalf("expected body '[]', got %q", body)
+	}
+}
+
+func TestAdminListSurveysUnauthorized(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys", nil)
+	rec := httptest.NewRecorder()
+	s.handleAdminList(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth: status = %d, want 401", rec.Code)
+	}
+}
+
+func TestAdminDetailSurvey(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	s.store.UpsertSurvey("detail-poll", "yes,no,maybe", "named")
+	s.store.RecordVote("detail-poll", "yes", "v1", "Alice")
+	s.store.RecordVote("detail-poll", "yes", "v2", "Bob")
+	s.store.RecordVote("detail-poll", "no", "v3", "Mallory")
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys/detail-poll", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminDetail(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var data map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&data); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if data["survey_id"] != "detail-poll" {
+		t.Errorf("survey_id = %v, want detail-poll", data["survey_id"])
+	}
+	if data["mode"] != "named" {
+		t.Errorf("mode = %v, want named", data["mode"])
+	}
+
+	// Check tallies exist
+	tallies, ok := data["tallies"].([]any)
+	if !ok {
+		t.Fatal("tallies missing or not an array")
+	}
+	if len(tallies) != 2 { // 2 answers with votes
+		t.Fatalf("expected 2 tallies, got %d", len(tallies))
+	}
+
+	// First tally should be "yes" with 2 clicks (most popular)
+	first := tallies[0].(map[string]any)
+	if first["answer"] != "yes" || int(first["clicks"].(float64)) != 2 {
+		t.Errorf("first tally = %v, want {yes, 2}", first)
+	}
+}
+
+func TestAdminDetailSurveyNotFound(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys/nonexistent", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminDetail(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAdminDetailSurveyUnauthorized(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// No auth header
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys/some-poll", nil)
+	rec := httptest.NewRecorder()
+	s.handleAdminDetail(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth: status = %d, want 401", rec.Code)
+	}
+
+	// Wrong token
+	req2 := httptest.NewRequest(http.MethodGet, "/admin/surveys/some-poll", nil)
+	req2.Header.Set("Authorization", "Bearer wrong-token")
+	rec2 := httptest.NewRecorder()
+	s.handleAdminDetail(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", rec2.Code)
+	}
+}
+
+func TestAdminDetailSurveyInvalidSlug(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys/UPPERCASE", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminDetail(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestAdminCreateReturnsJSON(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	body := `{"survey_id":"json-test","answers":"x,y,z","mode":"named"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["survey_id"] != "json-test" {
+		t.Errorf("survey_id = %v, want json-test", resp["survey_id"])
+	}
+	if resp["mode"] != "named" {
+		t.Errorf("mode = %v, want named", resp["mode"])
+	}
+}
+
+func TestAdminCreateFormReturnsJSON(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	body := url.Values{"survey_id": {"form-test"}, "answers": {"a,b,c"}, "mode": {"anonymous"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["survey_id"] != "form-test" {
+		t.Errorf("survey_id = %v, want form-test", resp["survey_id"])
+	}
+}
+
+func TestAdminCreateReturnsJSONWithDefaultMode(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	body := `{"survey_id":"no-mode","answers":"a,b"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// Default mode should be "anonymous"
+	if resp["mode"] != "anonymous" {
+		t.Errorf("default mode = %v, want anonymous", resp["mode"])
+	}
+}
+
+func TestAdminResetNotFound(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys/nonexistent/reset", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminReset(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAdminDeleteNotFound(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/surveys/nonexistent", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminDelete(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAdminResetReturnsJSON(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	s.store.UpsertSurvey("reset-json", "a,b", "")
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys/reset-json/reset", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminReset(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("status = %v, want ok", resp["status"])
+	}
+}
+
+func TestAdminDeleteReturnsJSON(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	s.store.UpsertSurvey("del-json", "a,b", "")
+	req := httptest.NewRequest(http.MethodDelete, "/admin/surveys/del-json", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminDelete(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("status = %v, want ok", resp["status"])
 	}
 }

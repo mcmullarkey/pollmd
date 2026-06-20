@@ -47,6 +47,8 @@ const (
 	routeAdminCreate   = "POST /admin/surveys"
 	routeAdminReset    = "POST /admin/surveys/{id}/reset"
 	routeAdminDelete   = "DELETE /admin/surveys/{id}"
+	routeAdminList     = "GET /admin/surveys"
+	routeAdminDetail   = "GET /admin/surveys/{id}"
 )
 
 // Public URLs the root home page links to. Hardcoded rather than wired
@@ -164,6 +166,8 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc(routeStyle, s.handleStyle)
 	mux.HandleFunc(routeOGImage, s.handleOGImage)
 	mux.HandleFunc(routeOGImage2, s.handleOGImage2)
+	mux.HandleFunc(routeAdminList, s.handleAdminList)
+	mux.HandleFunc(routeAdminDetail, s.handleAdminDetail)
 	mux.HandleFunc(routeAdminCreate, s.handleAdminCreate)
 	mux.HandleFunc(routeAdminReset, s.handleAdminReset)
 	mux.HandleFunc(routeAdminDelete, s.handleAdminDelete)
@@ -581,6 +585,32 @@ type adminCreateRequest struct {
 	Mode     string `json:"mode"`
 }
 
+// Admin JSON response types
+
+type adminSurveyListItem struct {
+	SurveyID  string    `json:"survey_id"`
+	Answers   []string  `json:"answers"`
+	Mode      string    `json:"mode"`
+	VoteCount int       `json:"vote_count"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type adminSurveyDetail struct {
+	SurveyID  string        `json:"survey_id"`
+	Answers   []string      `json:"answers"`
+	Mode      string        `json:"mode"`
+	VoteCount int           `json:"vote_count"`
+	CreatedAt time.Time     `json:"created_at"`
+	Tallies   []store.Tally `json:"tallies"`
+}
+
+type adminCreateResponse struct {
+	SurveyID  string    `json:"survey_id"`
+	Answers   string    `json:"answers"`
+	Mode      string    `json:"mode"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // handleAdminCreate creates or updates a survey's allowed-answers
 // registration. Accepts both JSON and form-urlencoded POST bodies.
 // Protected by Bearer token auth.
@@ -639,7 +669,126 @@ func (s *Server) handleAdminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respMode := req.Mode
+	if respMode == "" {
+		respMode = "anonymous"
+	}
+
+	createdAt, err := s.store.GetSurveyCreatedAt(req.SurveyID)
+	if err != nil {
+		log.Printf("get created_at: survey_id=%s err=%v", req.SurveyID, err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(adminCreateResponse{
+		SurveyID:  req.SurveyID,
+		Answers:   req.Answers,
+		Mode:      respMode,
+		CreatedAt: createdAt,
+	})
+}
+
+// handleAdminList returns all registered surveys as a JSON array.
+func (s *Server) handleAdminList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.validAdminToken(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	summaries, err := s.store.ListSurveys()
+	if err != nil {
+		log.Printf("list surveys: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]adminSurveyListItem, 0, len(summaries))
+	for _, sum := range summaries {
+		items = append(items, adminSurveyListItem{
+			SurveyID:  sum.SurveyID,
+			Answers:   strings.Split(sum.AllowedAnswers, ","),
+			Mode:      sum.Mode,
+			VoteCount: sum.VoteCount,
+			CreatedAt: sum.CreatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// handleAdminDetail returns the full detail for a single survey as JSON.
+func (s *Server) handleAdminDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.validAdminToken(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	surveyID := surveyIDFromPath(r)
+	if !slugRe.MatchString(surveyID) {
+		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Check existence
+	answers, err := s.store.GetSurveyAnswers(surveyID)
+	if err != nil {
+		log.Printf("get survey answers: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if answers == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
+	}
+
+	mode, err := s.store.GetSurveyMode(surveyID)
+	if err != nil {
+		log.Printf("get survey mode: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	createdAt, err := s.store.GetSurveyCreatedAt(surveyID)
+	if err != nil {
+		log.Printf("get created_at: survey_id=%s err=%v", surveyID, err)
+		// Non-fatal — default to zero time
+	}
+
+	tallies, err := s.store.TallyBySurvey(surveyID)
+	if err != nil {
+		log.Printf("tally: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	total := 0
+	for _, t := range tallies {
+		total += t.Clicks
+	}
+
+	data := adminSurveyDetail{
+		SurveyID:  surveyID,
+		Answers:   answers,
+		Mode:      mode,
+		VoteCount: total,
+		CreatedAt: createdAt,
+		Tallies:   tallies,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
 }
 
 // surveyIDFromPath extracts the survey ID from the URL path for admin
@@ -673,13 +822,28 @@ func (s *Server) handleAdminReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check existence
+	answers, err := s.store.GetSurveyAnswers(surveyID)
+	if err != nil {
+		log.Printf("get survey: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if answers == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "survey not found"})
+		return
+	}
+
 	if err := s.store.ResetVotes(surveyID); err != nil {
 		log.Printf("admin reset: survey_id=%s err=%v", surveyID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // handleAdminDelete fully removes a survey: all votes and the registration
@@ -700,13 +864,28 @@ func (s *Server) handleAdminDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check existence
+	answers, err := s.store.GetSurveyAnswers(surveyID)
+	if err != nil {
+		log.Printf("get survey: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if answers == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "survey not found"})
+		return
+	}
+
 	if err := s.store.DeleteSurvey(surveyID); err != nil {
 		log.Printf("admin delete: survey_id=%s err=%v", surveyID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // publicBaseURL returns the scheme+host that an external client used to reach
