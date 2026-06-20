@@ -24,10 +24,11 @@ SURVEY_HOST ?= q.ssp.sh
 # itself is the real lock, but defence-in-depth.
 #
 # Defaults to whatever RAILWAY_QUACK_HOST / RAILWAY_QUACK_PORT are exported in
-# the shell (the same env vars `survey-result`, `survey-create`, `survey-reset`,
-# `survey-delete`, and `railway-duckdb-connect` already consume), so a single
-# direnv / shell profile feeds every Quack-using target. Override on the CLI
-# for self-hosted: `make smoke QUACK_HOST=quack.example.org QUACK_PORT=9494`.
+# the shell (the same env vars `survey-result` and `railway-duckdb-connect`
+# already consume), so a single direnv / shell profile feeds every Quack-using
+# target. Note: survey-create/reset/delete now use the HTTP API via pollctl
+# instead of Quack. Override on the CLI for self-hosted:
+# `make smoke QUACK_HOST=quack.example.org QUACK_PORT=9494`.
 QUACK_HOST  ?= $(RAILWAY_QUACK_HOST)
 QUACK_PORT  ?= $(RAILWAY_QUACK_PORT)
 
@@ -35,6 +36,13 @@ QUACK_PORT  ?= $(RAILWAY_QUACK_PORT)
 # the markdown answer links are formatted using this. Override on the
 # CLI if you serve under a different host.
 PUBLIC_URL  ?= https://q.ssp.sh
+
+# Admin HTTP API (used by pollctl for survey management).
+# Point to a running server instance (local or remote).
+POLLMD_ADMIN_URL ?= http://127.0.0.1:8080
+POLLMD_ADMIN_TOKEN ?= $(SURVEY_ADMIN_TOKEN)
+export SURVEY_ADMIN_URL := $(POLLMD_ADMIN_URL)
+export SURVEY_ADMIN_TOKEN := $(POLLMD_ADMIN_TOKEN)
 
 help:
 	@echo "Laptop targets (run on Arch):"
@@ -65,21 +73,21 @@ help:
 	@echo "                             (needs RAILWAY_QUACK_HOST, RAILWAY_QUACK_PORT,"
 	@echo "                              SURVEY_QUACK_TOKEN env vars)"
 	@echo "  survey-result            - one-shot tally with bar chart of all surveys"
-	@echo "                             (same env vars as railway-duckdb-connect)"
+	@echo "                             (uses Quack, needs SURVEY_QUACK_TOKEN + QUACK_HOST/"
+	@echo "                              QUACK_PORT)"
 	@echo "                             pass SURVEY_ID=<id> for a single-survey detail view"
-	@echo "  survey-reset             - DELETE every vote for a given SURVEY_ID."
-	@echo "                             Prompts to confirm (skip with CONFIRM=yes)."
+	@echo "  survey-reset             - Clear all votes for SURVEY_ID (keeps registration)."
+	@echo "                             Uses HTTP API via pollctl. Prompts to confirm"
+	@echo "                             (skip with CONFIRM=yes)."
 	@echo "                             usage: make survey-reset SURVEY_ID=<id>"
-	@echo "  survey-create            - Lock a SURVEY_ID to a fixed set of answer slugs."
-	@echo "                             Unregistered surveys stay open (any slug counts)."
-	@echo "                             Prints the landing-page URL ($(PUBLIC_URL)/<id>)"
-	@echo "                             and a ready-to-paste markdown block of vote links."
-	@echo "                             Override host with PUBLIC_URL=https://your.host"
+	@echo "  survey-create            - Register a SURVEY_ID with allowed answers."
+	@echo "                             Uses HTTP API via pollctl. Requires a running"
+	@echo "                             server + POLLMD_ADMIN_TOKEN (or SURVEY_ADMIN_TOKEN)."
+	@echo "                             Prints landing URL and ready-to-paste markdown links."
 	@echo "                             usage: make survey-create SURVEY_ID=<id> ANSWERS=a,b,c"
-	@echo "  survey-delete            - Nuke a survey completely: deletes every vote AND"
-	@echo "                             the surveys-table row in one go. Use survey-reset"
-	@echo "                             if you only want to drop votes but keep the lock."
-	@echo "                             Prompts to confirm (skip with CONFIRM=yes)."
+	@echo "  survey-delete            - Fully remove a survey (votes + registration)."
+	@echo "                             Uses HTTP API via pollctl. Prompts to confirm"
+	@echo "                             (skip with CONFIRM=yes)."
 	@echo "                             usage: make survey-delete SURVEY_ID=<id>"
 	@echo ""
 	@echo "Server target (run on FreeBSD as root, after 'ssh $(HOST)' && 'su root'):"
@@ -281,14 +289,15 @@ railway-duckdb-connect:
 	  echo "" && \
 	  duckdb -init "$$tmp"
 
-# One-shot tally with ascii bar chart.
+# Fetch a remote tally via Quack SQL (read-only, still requires Quack).
+# Shows an ASCII bar chart for SURVEY_ID, or all surveys if SURVEY_ID is empty.
 #
-#   make survey-result                          # all surveys, bars relative to each survey's top answer
-#   make survey-result SURVEY_ID=2026-06-04     # one survey only, bars relative to its top answer
+#   make survey-result SURVEY_ID=my-poll
+#   make survey-result                          # all surveys
 #
-# Same env vars as railway-duckdb-connect: SURVEY_QUACK_TOKEN,
-# RAILWAY_QUACK_HOST, RAILWAY_QUACK_PORT. SURVEY_ID is validated against the
-# same slug regex the server uses, so we can interpolate it safely.
+# Requires duckdb CLI + SURVEY_QUACK_TOKEN, RAILWAY_QUACK_HOST,
+# RAILWAY_QUACK_PORT. Unlike survey-create/reset/delete, this target
+# queries the remote database directly via Quack rather than the HTTP API.
 SURVEY_ID ?=
 
 survey-result:
@@ -311,20 +320,12 @@ survey-result:
 	    duckdb -init "$$tmp" -c "WITH t AS (SELECT survey_id, answer, count(*) AS clicks FROM remote_votes GROUP BY ALL), m AS (SELECT survey_id, max(clicks) AS top FROM t GROUP BY survey_id) SELECT t.survey_id, t.answer, t.clicks, bar(t.clicks, 0, m.top, 30) AS chart FROM t JOIN m USING (survey_id) ORDER BY t.survey_id DESC, t.clicks DESC;"; \
 	  fi
 
-# Wipe every vote for SURVEY_ID. Requires explicit SURVEY_ID and an
-# interactive "yes" (or CONFIRM=yes for non-interactive flows).
+# Reset all votes for SURVEY_ID via the admin HTTP API.
+# Keeps the survey registration (allowed_answers) intact.
 #
 #   make survey-reset SURVEY_ID=init
-#   make survey-reset SURVEY_ID=init CONFIRM=yes    # no prompt
-#
-# Uses DELETE ... RETURNING * so you see exactly what got wiped.
+#   make survey-reset SURVEY_ID=init CONFIRM=yes    # skip prompt
 survey-reset:
-	@command -v duckdb >/dev/null || { echo "error: duckdb CLI not on PATH (install duckdb locally first)" >&2; exit 1; }
-	@if [ -z "$$SURVEY_QUACK_TOKEN" ] || [ -z "$$RAILWAY_QUACK_HOST" ] || [ -z "$$RAILWAY_QUACK_PORT" ]; then \
-	    echo "error: need SURVEY_QUACK_TOKEN, RAILWAY_QUACK_HOST, RAILWAY_QUACK_PORT" >&2; \
-	    echo "       see docs/install-railway.md" >&2; \
-	    exit 1; \
-	fi
 	@if [ -z "$(SURVEY_ID)" ]; then \
 	    echo "error: SURVEY_ID is required (no default to prevent accidents)" >&2; \
 	    echo "       usage: make survey-reset SURVEY_ID=<id>" >&2; \
@@ -334,42 +335,20 @@ survey-reset:
 	    echo "error: SURVEY_ID must match ^[a-z0-9][a-z0-9_-]{0,63}\$$" >&2; \
 	    exit 1; \
 	fi
-	@tmp=$$(mktemp) && trap "rm -f $$tmp" EXIT INT TERM HUP && \
-	  printf "INSTALL quack;\nLOAD quack;\nCREATE OR REPLACE MACRO rq(sql) AS TABLE (FROM quack_query('quack:%s:%s', sql, token => '%s', disable_ssl => true));\n" \
-	    "$$RAILWAY_QUACK_HOST" "$$RAILWAY_QUACK_PORT" "$$SURVEY_QUACK_TOKEN" > "$$tmp" && \
-	  echo "" && \
-	  echo "Current votes for survey_id='$(SURVEY_ID)':" && \
-	  duckdb -init "$$tmp" -c "FROM rq('SELECT answer, count(*) AS clicks FROM votes WHERE survey_id = ''$(SURVEY_ID)'' GROUP BY answer ORDER BY clicks DESC');" && \
-	  if [ "$(CONFIRM)" != "yes" ]; then \
-	    printf "\nDelete all votes for survey_id='$(SURVEY_ID)'? Type 'yes' to confirm: "; \
-	    read ans; \
-	    [ "$$ans" = "yes" ] || { echo "aborted."; exit 1; }; \
-	  fi && \
-	  echo "" && \
-	  echo "Deleted rows:" && \
-	  duckdb -init "$$tmp" -c "FROM rq('DELETE FROM votes WHERE survey_id = ''$(SURVEY_ID)'' RETURNING *');" && \
-	  echo "done."
+	@if [ "$(CONFIRM)" = "yes" ]; then \
+	    go run ./cmd/pollctl reset "$(SURVEY_ID)" --yes; \
+	else \
+	    go run ./cmd/pollctl reset "$(SURVEY_ID)"; \
+	fi
 
-# Register a survey's allowed answer slugs. After this, only those answers
-# are recorded for that survey; anything else returns 200 without a vote
-# and logs `answer-reject`. Unregistered surveys stay in open mode.
+# Register a survey's allowed answer slugs via the admin HTTP API.
 #
 #   make survey-create SURVEY_ID=2026-06-15 ANSWERS=awesome,good,better,worse
 #   make survey-create SURVEY_ID=my-poll ANSWERS=a,b,c MODE=named
 #
-# Re-running upserts the row, so editing the answer set is a re-run with
-# new ANSWERS. To remove a survey entirely (registration + votes), run
-# `make survey-delete SURVEY_ID=<id>`. To only drop votes but keep the
-# answer lock in place, run `make survey-reset SURVEY_ID=<id>`.
-#
+# Requires a running server and POLLMD_ADMIN_TOKEN (or SURVEY_ADMIN_TOKEN).
 # Optional MODE flag: MODE=named|anonymous (default anonymous).
 survey-create:
-	@command -v duckdb >/dev/null || { echo "error: duckdb CLI not on PATH (install duckdb locally first)" >&2; exit 1; }
-	@if [ -z "$$SURVEY_QUACK_TOKEN" ] || [ -z "$$RAILWAY_QUACK_HOST" ] || [ -z "$$RAILWAY_QUACK_PORT" ]; then \
-	    echo "error: need SURVEY_QUACK_TOKEN, RAILWAY_QUACK_HOST, RAILWAY_QUACK_PORT" >&2; \
-	    echo "       see docs/install-railway.md" >&2; \
-	    exit 1; \
-	fi
 	@if [ -z "$(SURVEY_ID)" ]; then \
 	    echo "error: SURVEY_ID is required" >&2; \
 	    echo "       usage: make survey-create SURVEY_ID=<id> ANSWERS=a,b,c [MODE=named]" >&2; \
@@ -393,43 +372,30 @@ survey-create:
 	        exit 1; \
 	    }; \
 	done
-	@mode_val=$${MODE:-anonymous}; \
-	tmp=$$(mktemp) && trap "rm -f $$tmp" EXIT INT TERM HUP && \
-	  printf "INSTALL quack;\nLOAD quack;\nCREATE OR REPLACE MACRO rq(sql) AS TABLE (FROM quack_query('quack:%s:%s', sql, token => '%s', disable_ssl => true));\n" \
-	    "$$RAILWAY_QUACK_HOST" "$$RAILWAY_QUACK_PORT" "$$SURVEY_QUACK_TOKEN" > "$$tmp" && \
-	  echo "" && \
-	  echo "Registering survey_id='$(SURVEY_ID)' with allowed answers: $(ANSWERS)" && \
-	  echo "Mode: $$mode_val" && \
-	  duckdb -init "$$tmp" -c "FROM rq('INSERT INTO surveys (survey_id, allowed_answers, mode) VALUES (''$(SURVEY_ID)'', ''$(ANSWERS)'', ''$$mode_val'') ON CONFLICT (survey_id) DO UPDATE SET allowed_answers = excluded.allowed_answers, mode = excluded.mode RETURNING *');" && \
-	  echo "" && \
-	  echo "Landing page (share this URL):" && \
-	  echo "  $(PUBLIC_URL)/$(SURVEY_ID)" && \
-	  echo "" && \
-	  echo "Markdown links to paste into your newsletter:" && \
-	  echo "" && \
-	  for a in $$(echo "$(ANSWERS)" | tr ',' ' '); do \
-	      label=$$(echo "$$a" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $$i = toupper(substr($$i,1,1)) substr($$i,2); print}'); \
-	      echo "  [$$label]($(PUBLIC_URL)/$(SURVEY_ID)/$$a)"; \
-	  done && \
-	  echo "" && \
-	  echo "Live tally page:" && \
-	  echo "  $(PUBLIC_URL)/result/$(SURVEY_ID)" && \
-	  echo "" && \
-	  echo "done."
+	@mode_flag=; if [ -n "$(MODE)" ]; then mode_flag="--mode $(MODE)"; fi; \
+	echo "Registering survey_id='$(SURVEY_ID)' with allowed answers: $(ANSWERS)"; \
+	go run ./cmd/pollctl create "$(SURVEY_ID)" --answers "$(ANSWERS)" $$mode_flag; \
+	echo ""; \
+	echo "Landing page (share this URL):"; \
+	echo "  $(PUBLIC_URL)/$(SURVEY_ID)"; \
+	echo ""; \
+	echo "Markdown links to paste into your newsletter:"; \
+	echo ""; \
+	for a in $$(echo "$(ANSWERS)" | tr ',' ' '); do \
+	    label=$$(echo "$$a" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $$i = toupper(substr($$i,1,1)) substr($$i,2); print}'); \
+	    echo "  [$$label]($(PUBLIC_URL)/$(SURVEY_ID)/$$a)"; \
+	done; \
+	echo ""; \
+	echo "Live tally page:"; \
+	echo "  $(PUBLIC_URL)/result/$(SURVEY_ID)"; \
+	echo ""; \
+	echo "done."
 
-# Fully nuke a survey: delete every vote AND the surveys-table row in one
-# command. If you only want to drop votes but keep the allowed-answers
-# lock in place, use survey-reset.
+# Fully remove a survey (votes + registration) via the admin HTTP API.
 #
 #   make survey-delete SURVEY_ID=test123
-#   make survey-delete SURVEY_ID=test123 CONFIRM=yes    # no prompt
+#   make survey-delete SURVEY_ID=test123 CONFIRM=yes    # skip prompt
 survey-delete:
-	@command -v duckdb >/dev/null || { echo "error: duckdb CLI not on PATH (install duckdb locally first)" >&2; exit 1; }
-	@if [ -z "$$SURVEY_QUACK_TOKEN" ] || [ -z "$$RAILWAY_QUACK_HOST" ] || [ -z "$$RAILWAY_QUACK_PORT" ]; then \
-	    echo "error: need SURVEY_QUACK_TOKEN, RAILWAY_QUACK_HOST, RAILWAY_QUACK_PORT" >&2; \
-	    echo "       see docs/install-railway.md" >&2; \
-	    exit 1; \
-	fi
 	@if [ -z "$(SURVEY_ID)" ]; then \
 	    echo "error: SURVEY_ID is required (no default to prevent accidents)" >&2; \
 	    echo "       usage: make survey-delete SURVEY_ID=<id>" >&2; \
@@ -439,26 +405,8 @@ survey-delete:
 	    echo "error: SURVEY_ID must match ^[a-z0-9][a-z0-9_-]{0,63}\$$" >&2; \
 	    exit 1; \
 	fi
-	@tmp=$$(mktemp) && trap "rm -f $$tmp" EXIT INT TERM HUP && \
-	  printf "INSTALL quack;\nLOAD quack;\nCREATE OR REPLACE MACRO rq(sql) AS TABLE (FROM quack_query('quack:%s:%s', sql, token => '%s', disable_ssl => true));\n" \
-	    "$$RAILWAY_QUACK_HOST" "$$RAILWAY_QUACK_PORT" "$$SURVEY_QUACK_TOKEN" > "$$tmp" && \
-	  echo "" && \
-	  echo "Current registration for survey_id='$(SURVEY_ID)':" && \
-	  duckdb -init "$$tmp" -c "FROM rq('SELECT survey_id, allowed_answers, created_at FROM surveys WHERE survey_id = ''$(SURVEY_ID)''');" && \
-	  echo "" && \
-	  echo "Current votes for survey_id='$(SURVEY_ID)':" && \
-	  duckdb -init "$$tmp" -c "FROM rq('SELECT answer, count(*) AS clicks FROM votes WHERE survey_id = ''$(SURVEY_ID)'' GROUP BY answer ORDER BY clicks DESC');" && \
-	  if [ "$(CONFIRM)" != "yes" ]; then \
-	    printf "\nDelete the registration AND every vote for survey_id='$(SURVEY_ID)'? Type 'yes' to confirm: "; \
-	    read ans; \
-	    [ "$$ans" = "yes" ] || { echo "aborted."; exit 1; }; \
-	  fi && \
-	  echo "" && \
-	  echo "Deleted votes:" && \
-	  duckdb -init "$$tmp" -c "FROM rq('DELETE FROM votes WHERE survey_id = ''$(SURVEY_ID)'' RETURNING *');" && \
-	  echo "" && \
-	  echo "Deleted registration:" && \
-	  duckdb -init "$$tmp" -c "FROM rq('DELETE FROM surveys WHERE survey_id = ''$(SURVEY_ID)'' RETURNING *');" && \
-	  echo "" && \
-	  echo "Survey '$(SURVEY_ID)' fully removed." && \
-	  echo "done."
+	@if [ "$(CONFIRM)" = "yes" ]; then \
+	    go run ./cmd/pollctl delete "$(SURVEY_ID)" --yes; \
+	else \
+	    go run ./cmd/pollctl delete "$(SURVEY_ID)"; \
+	fi
