@@ -167,6 +167,22 @@ func TestNamedModeVote(t *testing.T) {
 	if !strings.Contains(loc, "/thanks?id=named-poll") {
 		t.Fatalf("unexpected redirect location: %s", loc)
 	}
+
+	// Verify name persisted in the DB
+	names, err := s.store.VoteNames("named-poll")
+	if err != nil {
+		t.Fatalf("VoteNames: %v", err)
+	}
+	found := false
+	for _, n := range names {
+		if n == "Mallory" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected vote with name 'Mallory' in DB, got: %v", names)
+	}
 }
 
 // TestNamedModeVoteLongName verifies that names over 200 chars return 400.

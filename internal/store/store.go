@@ -247,6 +247,29 @@ func (s *Store) DeleteSurvey(surveyID string) error {
 // TallyBySurvey returns the per-answer click count for a survey, most popular
 // first. An unknown survey_id returns an empty slice (not an error) — the
 // result page renders an "empty" state.
+// VoteNames returns voter_name for each vote on a survey, keyed by voter
+// hash. A vote recorded without a name will have an empty-string value.
+// Returns an empty map (not nil) when the survey has no votes.
+func (s *Store) VoteNames(surveyID string) (map[string]string, error) {
+	rows, err := s.db.Query(
+		`SELECT voter, COALESCE(voter_name, '') FROM votes WHERE survey_id = ?`,
+		surveyID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := make(map[string]string)
+	for rows.Next() {
+		var voter, name string
+		if err := rows.Scan(&voter, &name); err != nil {
+			return nil, err
+		}
+		names[voter] = name
+	}
+	return names, rows.Err()
+}
+
 func (s *Store) TallyBySurvey(surveyID string) ([]Tally, error) {
 	const q = `
 		SELECT answer, count(*) AS clicks
