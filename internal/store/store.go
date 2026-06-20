@@ -161,6 +161,38 @@ func (s *Store) GetAllowedAnswers(surveyID string) (map[string]bool, error) {
 	return out, nil
 }
 
+// UpsertSurvey creates or updates a survey's allowed-answers registration.
+// If the survey_id already exists, the allowed_answers are replaced.
+func (s *Store) UpsertSurvey(surveyID, answers string) error {
+	const q = `
+		INSERT INTO surveys (survey_id, allowed_answers)
+		VALUES (?, ?)
+		ON CONFLICT (survey_id) DO UPDATE
+		SET allowed_answers = excluded.allowed_answers
+	`
+	_, err := s.db.Exec(q, surveyID, answers)
+	return err
+}
+
+// ResetVotes deletes all votes for a given survey. The survey registration
+// (allowed_answers) is preserved.
+func (s *Store) ResetVotes(surveyID string) error {
+	const q = `DELETE FROM votes WHERE survey_id = ?`
+	_, err := s.db.Exec(q, surveyID)
+	return err
+}
+
+// DeleteSurvey deletes all votes for a survey and then removes the survey
+// registration itself. After this call the survey is fully gone.
+func (s *Store) DeleteSurvey(surveyID string) error {
+	if err := s.ResetVotes(surveyID); err != nil {
+		return err
+	}
+	const q = `DELETE FROM surveys WHERE survey_id = ?`
+	_, err := s.db.Exec(q, surveyID)
+	return err
+}
+
 // TallyBySurvey returns the per-answer click count for a survey, most popular
 // first. An unknown survey_id returns an empty slice (not an error) — the
 // result page renders an "empty" state.
