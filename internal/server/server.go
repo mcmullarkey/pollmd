@@ -229,10 +229,28 @@ func (s *Server) handleSurvey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if the survey supports named voting. Unregistered surveys
+	// default to "anonymous" mode.
+	mode, err := s.store.GetSurveyMode(surveyID)
+	if err != nil {
+		log.Printf("survey mode lookup: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	var voterName string
+	if mode == "named" {
+		voterName = r.URL.Query().Get("name")
+		if len(voterName) > 200 {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+	}
+
 	ip := clientIP(r)
 	vh := voter.Hash(ip, ua, surveyID, s.salt.Current())
 
-	if err := s.store.RecordVote(surveyID, answer, vh); err != nil {
+	if err := s.store.RecordVote(surveyID, answer, vh, voterName); err != nil {
 		log.Printf("record vote: survey=%s err=%v", surveyID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -523,6 +541,7 @@ func (s *Server) validAdminToken(r *http.Request) bool {
 type adminCreateRequest struct {
 	SurveyID string `json:"survey_id"`
 	Answers  string `json:"answers"`
+	Mode     string `json:"mode"`
 }
 
 // handleAdminCreate creates or updates a survey's allowed-answers
@@ -552,6 +571,7 @@ func (s *Server) handleAdminCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		req.SurveyID = r.FormValue("survey_id")
 		req.Answers = r.FormValue("answers")
+		req.Mode = r.FormValue("mode")
 	}
 
 	if !slugRe.MatchString(req.SurveyID) {
@@ -559,6 +579,11 @@ func (s *Server) handleAdminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Answers == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// Validate mode if provided
+	if req.Mode != "" && req.Mode != "anonymous" && req.Mode != "named" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -571,7 +596,7 @@ func (s *Server) handleAdminCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.store.UpsertSurvey(req.SurveyID, req.Answers); err != nil {
+	if err := s.store.UpsertSurvey(req.SurveyID, req.Answers, req.Mode); err != nil {
 		log.Printf("admin create: survey_id=%s err=%v", req.SurveyID, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
