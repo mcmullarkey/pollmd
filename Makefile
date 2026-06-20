@@ -41,6 +41,8 @@ PUBLIC_URL  ?= https://q.ssp.sh
 # Point to a running server instance (local or remote).
 POLLMD_ADMIN_URL ?= http://127.0.0.1:8080
 POLLMD_ADMIN_TOKEN ?= $(SURVEY_ADMIN_TOKEN)
+export SURVEY_ADMIN_URL := $(POLLMD_ADMIN_URL)
+export SURVEY_ADMIN_TOKEN := $(POLLMD_ADMIN_TOKEN)
 
 help:
 	@echo "Laptop targets (run on Arch):"
