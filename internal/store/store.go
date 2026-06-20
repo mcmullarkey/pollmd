@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 )
@@ -135,8 +136,8 @@ func (s *Store) RecordVote(surveyID, answer, voter, voterName string) error {
 
 // Tally is one (answer, count) pair for a survey. Ordered most-popular-first.
 type Tally struct {
-	Answer string
-	Clicks int
+	Answer string `json:"answer"`
+	Clicks int    `json:"clicks"`
 }
 
 // GetSurveyAnswers returns the allowed answer slugs for a survey, in the
@@ -320,4 +321,51 @@ func (s *Store) TallyBySurvey(surveyID string) ([]Tally, error) {
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// SurveySummary is a single survey in the admin list response.
+type SurveySummary struct {
+	SurveyID       string    `json:"survey_id"`
+	AllowedAnswers string    `json:"allowed_answers"`
+	Mode           string    `json:"mode"`
+	VoteCount      int       `json:"vote_count"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// ListSurveys returns all registered surveys with vote counts.
+func (s *Store) ListSurveys() ([]SurveySummary, error) {
+	const q = `
+		SELECT s.survey_id, s.allowed_answers, s.mode, s.created_at,
+		       COALESCE(v.vote_count, 0) AS vote_count
+		FROM surveys s
+		LEFT JOIN (
+			SELECT survey_id, COUNT(*) AS vote_count
+			FROM votes
+			GROUP BY survey_id
+		) v ON s.survey_id = v.survey_id
+		ORDER BY s.created_at DESC
+	`
+	rows, err := s.db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []SurveySummary
+	for rows.Next() {
+		var sum SurveySummary
+		if err := rows.Scan(&sum.SurveyID, &sum.AllowedAnswers, &sum.Mode, &sum.CreatedAt, &sum.VoteCount); err != nil {
+			return nil, err
+		}
+		out = append(out, sum)
+	}
+	return out, rows.Err()
+}
+
+// GetSurveyCreatedAt returns the created_at timestamp for a survey.
+// Returns zero time and no error if the survey does not exist.
+func (s *Store) GetSurveyCreatedAt(surveyID string) (time.Time, error) {
+	var t time.Time
+	err := s.db.QueryRow(`SELECT created_at FROM surveys WHERE survey_id = ?`, surveyID).Scan(&t)
+	return t, err
 }
