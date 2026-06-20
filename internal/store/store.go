@@ -183,14 +183,22 @@ func (s *Store) ResetVotes(surveyID string) error {
 }
 
 // DeleteSurvey deletes all votes for a survey and then removes the survey
-// registration itself. After this call the survey is fully gone.
+// registration itself. After this call the survey is fully gone. Both
+// DELETEs happen in a single transaction for atomicity.
 func (s *Store) DeleteSurvey(surveyID string) error {
-	if err := s.ResetVotes(surveyID); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-	const q = `DELETE FROM surveys WHERE survey_id = ?`
-	_, err := s.db.Exec(q, surveyID)
-	return err
+	defer tx.Rollback()
+
+	if _, err = tx.Exec(`DELETE FROM votes WHERE survey_id = ?`, surveyID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM surveys WHERE survey_id = ?`, surveyID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // TallyBySurvey returns the per-answer click count for a survey, most popular

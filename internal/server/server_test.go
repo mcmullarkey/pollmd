@@ -212,6 +212,28 @@ func TestAdminCreateSurvey(t *testing.T) {
 	}
 }
 
+func TestAdminCreateSurveyJSON(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	body := `{"survey_id":"json-test","answers":"alpha,beta"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	answers, err := s.store.GetSurveyAnswers("json-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(answers) != 2 || answers[0] != "alpha" || answers[1] != "beta" {
+		t.Fatalf("unexpected answers: %v", answers)
+	}
+}
+
 func TestAdminCreateUnauthorized(t *testing.T) {
 	s := newTestServerWithStore(t, "test-token")
 	body := url.Values{"survey_id": {"x"}, "answers": {"a"}}
