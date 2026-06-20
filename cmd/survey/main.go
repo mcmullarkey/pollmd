@@ -14,7 +14,7 @@ func main() {
 		HTTPAddr:   getenv("SURVEY_HTTP_ADDR", "127.0.0.1:8080"),
 		QuackAddr:  getenv("SURVEY_QUACK_ADDR", "127.0.0.1:9494"),
 		QuackToken: os.Getenv("SURVEY_QUACK_TOKEN"),
-		BlogURL:    getenv("SURVEY_BLOG_URL", "https://www.ssp.sh"),
+		SiteURL:    getenv("SURVEY_SITE_URL", "https://pollmd.ssp.sh"),
 	}
 	if cfg.QuackToken == "" {
 		log.Fatal("SURVEY_QUACK_TOKEN must be set")
