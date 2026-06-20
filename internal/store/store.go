@@ -118,7 +118,7 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // RecordVote records a vote for a survey answer. voterName is optional —
 // pass "" for anonymous mode. If the voter has already voted, their answer
-// is updated and the old name is preserved if the new name is empty.
+// is updated and the voter_name is updated to the new name if non-empty.
 func (s *Store) RecordVote(surveyID, answer, voter, voterName string) error {
 	// On conflict, set the timestamp with now() rather than relying on
 	// excluded.ts. Using CURRENT_TIMESTAMP here trips DuckDB's binder
@@ -268,6 +268,33 @@ func (s *Store) VoteNames(surveyID string) (map[string]string, error) {
 		names[voter] = name
 	}
 	return names, rows.Err()
+}
+
+// VoteNamesByAnswer returns non-empty voter names grouped by answer for a survey.
+// Names are sorted alphabetically within each answer. Returns an empty map for
+// surveys with no votes or no named votes.
+func (s *Store) VoteNamesByAnswer(surveyID string) (map[string][]string, error) {
+	const q = `
+		SELECT answer, voter_name
+		FROM votes
+		WHERE survey_id = ? AND voter_name IS NOT NULL AND voter_name != ''
+		ORDER BY answer, voter_name
+	`
+	rows, err := s.db.Query(q, surveyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string][]string)
+	for rows.Next() {
+		var answer, name string
+		if err := rows.Scan(&answer, &name); err != nil {
+			return nil, err
+		}
+		out[answer] = append(out[answer], name)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) TallyBySurvey(surveyID string) ([]Tally, error) {

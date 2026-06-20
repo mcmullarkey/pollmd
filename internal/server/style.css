@@ -139,6 +139,24 @@ h1 {
   text-align: right;
 }
 
+.voters {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: -0.3rem;
+}
+
+.voter-name {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  background: var(--lightgray);
+  border: 1px solid var(--outlinegray);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--gray);
+}
+
 .empty {
   color: var(--gray);
   opacity: 0.7;
