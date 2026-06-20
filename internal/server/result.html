@@ -12,7 +12,7 @@
 <meta property="og:url" content="{{.PageURL}}">
 <meta property="og:image" content="{{.OGImageURL}}">
 <meta property="og:description" content="{{.OGDescription}}">
-<meta property="og:site_name" content="sspaeti.com newsletter survey">
+<meta property="og:site_name" content="pollmd">
 
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:site" content="@sspaeti">
@@ -25,7 +25,6 @@
 <body>
   <main class="card">
     <div class="hero">
-      <img class="logo" src="https://www.ssp.sh/brain/logo_ssp_main.png" alt="sspaeti.com logo">
       <h1>Survey results</h1>
       <p class="subtitle">
         <code>{{.SurveyID}}</code> &middot; {{.TotalVotes}} {{if eq .TotalVotes 1}}vote{{else}}votes{{end}}
@@ -47,11 +46,10 @@
     {{end}}
 
     <p class="links">
-      <a class="back-link" href="{{.BlogURL}}">Back to the blog &rarr;</a>
-      <a class="secondary-link" href="https://www.ssp.sh/brain/newsletter/">Newsletter &rarr;</a>
+      <a class="back-link" href="{{.SiteURL}}">Back to site &rarr;</a>
     </p>
     <p class="muted">
-      Live tally from the survey database. Each vote was hashed anonymously
+      Live tally from the poll database. Each vote was hashed anonymously
       with a salt that rotates every day at midnight UTC, so individual
       voters can&rsquo;t be tied to clicks.
     </p>
