@@ -3,8 +3,11 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/sspaeti/minimal-newsletter-survey/internal/store"
 )
 
 func TestSlugAccepts(t *testing.T) {
@@ -156,5 +159,250 @@ func TestHomeRouteDoesNotShadow(t *testing.T) {
 	}
 	if !hitLanding {
 		t.Errorf("GET /init did not hit landing handler")
+	}
+}
+
+// newTestServerWithStore returns a Server backed by an in-memory DuckDB.
+func newTestServerWithStore(t *testing.T, adminToken string) *Server {
+	t.Helper()
+	st, err := store.Open(":memory:", "", "")
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	cfg := Config{
+		SiteURL:    "https://pollmd.ssp.sh",
+		AdminToken: adminToken,
+	}
+	return New(cfg, st)
+}
+
+func TestAdminCreateSurvey(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Valid create
+	body := url.Values{"survey_id": {"test-poll"}, "answers": {"yes,no,maybe"}}
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify via GetSurveyAnswers
+	answers, err := s.store.GetSurveyAnswers("test-poll")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(answers) != 3 || answers[0] != "yes" || answers[1] != "no" || answers[2] != "maybe" {
+		t.Fatalf("unexpected answers: %v", answers)
+	}
+
+	// Idempotent re-create. Create a fresh request because the original body
+	// was consumed by the first call.
+	req2 := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Authorization", "Bearer test-token")
+	rec2 := httptest.NewRecorder()
+	s.handleAdminCreate(rec2, req2)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("re-create status = %d, want 201", rec2.Code)
+	}
+}
+
+func TestAdminCreateSurveyJSON(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	body := `{"survey_id":"json-test","answers":"alpha,beta"}`
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	answers, err := s.store.GetSurveyAnswers("json-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(answers) != 2 || answers[0] != "alpha" || answers[1] != "beta" {
+		t.Fatalf("unexpected answers: %v", answers)
+	}
+}
+
+func TestAdminCreateUnauthorized(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+	body := url.Values{"survey_id": {"x"}, "answers": {"a"}}
+
+	// No auth
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth: status = %d, want 401", rec.Code)
+	}
+
+	// Wrong token
+	req2 := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Authorization", "Bearer wrong-token")
+	rec2 := httptest.NewRecorder()
+	s.handleAdminCreate(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", rec2.Code)
+	}
+}
+
+func TestAdminCreateInvalidSlug(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	tests := []struct {
+		name     string
+		surveyID string
+		answers  string
+	}{
+		{"empty survey_id", "", "a"},
+		{"empty answers", "ok", ""},
+		{"uppercase survey_id", "UPPERCASE", "a"},
+		{"leading dash survey_id", "-bad", "a"},
+		{"bad answer slug", "ok", "_bad"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := url.Values{"survey_id": {tt.surveyID}, "answers": {tt.answers}}
+			req := httptest.NewRequest(http.MethodPost, "/admin/surveys", strings.NewReader(body.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Authorization", "Bearer test-token")
+			rec := httptest.NewRecorder()
+			s.handleAdminCreate(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
+			}
+		})
+	}
+}
+
+func TestAdminCreateMethodNotAllowed(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// GET to POST-only route → handler returns 405
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET status = %d, want 405", rec.Code)
+	}
+}
+
+func TestAdminCreateTokenInQueryParam(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+	body := url.Values{"survey_id": {"x"}, "answers": {"a"}}
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys?token=test-token", strings.NewReader(body.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// No Authorization header — token is only in query param
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (token in query param not accepted)", rec.Code)
+	}
+}
+
+func TestAdminResetUnauthorized(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// No auth
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys/x/reset", nil)
+	rec := httptest.NewRecorder()
+	s.handleAdminReset(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth: status = %d, want 401", rec.Code)
+	}
+
+	// Wrong token
+	req2 := httptest.NewRequest(http.MethodPost, "/admin/surveys/x/reset", nil)
+	req2.Header.Set("Authorization", "Bearer wrong-token")
+	rec2 := httptest.NewRecorder()
+	s.handleAdminReset(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", rec2.Code)
+	}
+}
+
+func TestAdminDeleteUnauthorized(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// No auth
+	req := httptest.NewRequest(http.MethodDelete, "/admin/surveys/x", nil)
+	rec := httptest.NewRecorder()
+	s.handleAdminDelete(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth: status = %d, want 401", rec.Code)
+	}
+
+	// Wrong token
+	req2 := httptest.NewRequest(http.MethodDelete, "/admin/surveys/x", nil)
+	req2.Header.Set("Authorization", "Bearer wrong-token")
+	rec2 := httptest.NewRecorder()
+	s.handleAdminDelete(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", rec2.Code)
+	}
+}
+
+func TestAdminReset(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Create a survey with a vote
+	s.store.UpsertSurvey("reset-test", "a,b")
+	s.store.RecordVote("reset-test", "a", "voter1")
+	s.store.RecordVote("reset-test", "b", "voter2")
+
+	// Reset
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys/reset-test/reset", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminReset(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset status = %d, want 200", rec.Code)
+	}
+
+	// Verify votes cleared
+	tallies, _ := s.store.TallyBySurvey("reset-test")
+	if len(tallies) != 0 {
+		t.Fatalf("expected 0 tallies, got %d", len(tallies))
+	}
+
+	// Survey registration still exists
+	answers, _ := s.store.GetSurveyAnswers("reset-test")
+	if answers == nil {
+		t.Fatal("survey registration should still exist")
+	}
+}
+
+func TestAdminDelete(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	s.store.UpsertSurvey("delete-test", "a")
+	s.store.RecordVote("delete-test", "a", "voter1")
+
+	req := httptest.NewRequest(http.MethodDelete, "/admin/surveys/delete-test", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminDelete(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", rec.Code)
+	}
+
+	// Survey gone
+	answers, _ := s.store.GetSurveyAnswers("delete-test")
+	if answers != nil {
+		t.Fatal("survey should have been deleted")
 	}
 }

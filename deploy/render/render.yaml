@@ -1,0 +1,28 @@
+# Render Blueprint — one-click deploy for pollmd on Render.
+#
+# Unlike Railway, Render only exposes HTTP ports (no TCP Proxy for Quack).
+# Administration is done through the HTTP admin endpoints protected by
+# SURVEY_ADMIN_TOKEN.
+#
+# Usage:
+#   1. Fork the repo and connect it to Render.
+#   2. Set SURVEY_ADMIN_TOKEN in the Render Dashboard environment.
+#   3. Render builds this Dockerfile and deploys.
+#
+# See docs/content/docs/install/render.md for full setup instructions.
+
+services:
+  - type: web
+    name: pollmd
+    env: docker
+    dockerfilePath: deploy/render/Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: SURVEY_HTTP_ADDR
+        value: 0.0.0.0:8080
+      - key: SURVEY_DB_PATH
+        value: /var/db/survey/votes.duckdb
+      - key: SURVEY_SITE_URL
+        value: https://pollmd.ssp.sh
+      - key: SURVEY_ADMIN_TOKEN
+        sync: false

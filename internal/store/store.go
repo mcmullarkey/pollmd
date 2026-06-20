@@ -43,8 +43,10 @@ CREATE TABLE IF NOT EXISTS surveys (
 var tokenSafe = regexp.MustCompile(`^[A-Za-z0-9+/=_-]+$`)
 
 func Open(path, quackAddr, quackToken string) (_ *Store, err error) {
-	if !tokenSafe.MatchString(quackToken) {
-		return nil, fmt.Errorf("SURVEY_QUACK_TOKEN must be URL-safe base64")
+	if quackAddr != "" {
+		if !tokenSafe.MatchString(quackToken) {
+			return nil, fmt.Errorf("SURVEY_QUACK_TOKEN must be URL-safe base64")
+		}
 	}
 
 	db, err := sql.Open("duckdb", path)
@@ -70,27 +72,29 @@ func Open(path, quackAddr, quackToken string) (_ *Store, err error) {
 		return nil, fmt.Errorf("schema surveys: %w", err)
 	}
 
-	// Quack ships via the `core` extension repo from DuckDB 1.5.3 onwards.
-	// Earlier versions (1.5.2 etc.) had it in `core_nightly` — this code requires
-	// 1.5.3+, which is what duckdb-go-bindings/v2 v0.10503.x bundles for
-	// linux/darwin/windows. The first `INSTALL` call needs outbound HTTPS to
-	// extensions.duckdb.org to fetch the .duckdb_extension file.
-	if _, err = db.Exec(`INSTALL quack`); err != nil {
-		return nil, fmt.Errorf("install quack (need DuckDB 1.5.3+ and outbound HTTPS): %w", err)
-	}
-	if _, err = db.Exec(`LOAD quack`); err != nil {
-		return nil, fmt.Errorf("load quack: %w", err)
-	}
+	if quackAddr != "" {
+		// Quack ships via the `core` extension repo from DuckDB 1.5.3 onwards.
+		// Earlier versions (1.5.2 etc.) had it in `core_nightly` — this code
+		// requires 1.5.3+, which is what duckdb-go-bindings/v2 v0.10503.x
+		// bundles for linux/darwin/windows. The first `INSTALL` call needs
+		// outbound HTTPS to extensions.duckdb.org to fetch the extension file.
+		if _, err = db.Exec(`INSTALL quack`); err != nil {
+			return nil, fmt.Errorf("install quack (need DuckDB 1.5.3+ and outbound HTTPS): %w", err)
+		}
+		if _, err = db.Exec(`LOAD quack`); err != nil {
+			return nil, fmt.Errorf("load quack: %w", err)
+		}
 
-	// quack_serve takes named args via `=>`. The Go driver doesn't bind named
-	// params, so we interpolate after validating both inputs above.
-	quackURI := fmt.Sprintf("quack:%s", quackAddr)
-	serveSQL := fmt.Sprintf(
-		"CALL quack_serve('%s', token => '%s', allow_other_hostname => true)",
-		quackURI, quackToken,
-	)
-	if _, err = db.Exec(serveSQL); err != nil {
-		return nil, fmt.Errorf("quack_serve: %w", err)
+		// quack_serve takes named args via `=>`. The Go driver doesn't bind
+		// named params, so we interpolate after validating both inputs above.
+		quackURI := fmt.Sprintf("quack:%s", quackAddr)
+		serveSQL := fmt.Sprintf(
+			"CALL quack_serve('%s', token => '%s', allow_other_hostname => true)",
+			quackURI, quackToken,
+		)
+		if _, err = db.Exec(serveSQL); err != nil {
+			return nil, fmt.Errorf("quack_serve: %w", err)
+		}
 	}
 
 	return &Store{db: db}, nil
@@ -155,6 +159,46 @@ func (s *Store) GetAllowedAnswers(surveyID string) (map[string]bool, error) {
 		out[a] = true
 	}
 	return out, nil
+}
+
+// UpsertSurvey creates or updates a survey's allowed-answers registration.
+// If the survey_id already exists, the allowed_answers are replaced.
+func (s *Store) UpsertSurvey(surveyID, answers string) error {
+	const q = `
+		INSERT INTO surveys (survey_id, allowed_answers)
+		VALUES (?, ?)
+		ON CONFLICT (survey_id) DO UPDATE
+		SET allowed_answers = excluded.allowed_answers
+	`
+	_, err := s.db.Exec(q, surveyID, answers)
+	return err
+}
+
+// ResetVotes deletes all votes for a given survey. The survey registration
+// (allowed_answers) is preserved.
+func (s *Store) ResetVotes(surveyID string) error {
+	const q = `DELETE FROM votes WHERE survey_id = ?`
+	_, err := s.db.Exec(q, surveyID)
+	return err
+}
+
+// DeleteSurvey deletes all votes for a survey and then removes the survey
+// registration itself. After this call the survey is fully gone. Both
+// DELETEs happen in a single transaction for atomicity.
+func (s *Store) DeleteSurvey(surveyID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err = tx.Exec(`DELETE FROM votes WHERE survey_id = ?`, surveyID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM surveys WHERE survey_id = ?`, surveyID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // TallyBySurvey returns the per-answer click count for a survey, most popular

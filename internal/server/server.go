@@ -1,7 +1,9 @@
 package server
 
 import (
+	"crypto/subtle"
 	"embed"
+	"encoding/json"
 	"html/template"
 	"log"
 	"net"
@@ -19,6 +21,7 @@ type Config struct {
 	HTTPAddr   string
 	QuackAddr  string
 	QuackToken string
+	AdminToken string
 	SiteURL    string
 }
 
@@ -41,6 +44,9 @@ const (
 	routeStyle         = "/style.css"      // shared CSS for thanks.html + result.html
 	routeOGImage       = "/og-image.png"   // social-card image for landing.html + result.html
 	routeOGImage2      = "/og-image-q.png" // social-card image for home.html (root /)
+	routeAdminCreate   = "POST /admin/surveys"
+	routeAdminReset    = "POST /admin/surveys/{id}/reset"
+	routeAdminDelete   = "DELETE /admin/surveys/{id}"
 )
 
 // Public URLs the root home page links to. Hardcoded rather than wired
@@ -158,6 +164,9 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc(routeStyle, s.handleStyle)
 	mux.HandleFunc(routeOGImage, s.handleOGImage)
 	mux.HandleFunc(routeOGImage2, s.handleOGImage2)
+	mux.HandleFunc(routeAdminCreate, s.handleAdminCreate)
+	mux.HandleFunc(routeAdminReset, s.handleAdminReset)
+	mux.HandleFunc(routeAdminDelete, s.handleAdminDelete)
 	mux.HandleFunc(routeHealth, func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})
@@ -492,6 +501,150 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	if err := s.home.Execute(w, data); err != nil {
 		log.Printf("home template: %v", err)
 	}
+}
+
+// validAdminToken checks the request's Authorization header against the
+// configured admin token using constant-time comparison. Returns true if
+// the token matches, false if auth is missing or wrong.
+func (s *Server) validAdminToken(r *http.Request) bool {
+	if s.cfg.AdminToken == "" {
+		return false
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	given := strings.TrimPrefix(auth, "Bearer ")
+	return subtle.ConstantTimeCompare([]byte(given), []byte(s.cfg.AdminToken)) == 1
+}
+
+// adminCreateRequest is the JSON body accepted by handleAdminCreate.
+// Form-urlencoded fields follow the same key names.
+type adminCreateRequest struct {
+	SurveyID string `json:"survey_id"`
+	Answers  string `json:"answers"`
+}
+
+// handleAdminCreate creates or updates a survey's allowed-answers
+// registration. Accepts both JSON and form-urlencoded POST bodies.
+// Protected by Bearer token auth.
+func (s *Server) handleAdminCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.validAdminToken(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req adminCreateRequest
+	switch ct := r.Header.Get("Content-Type"); {
+	case strings.HasPrefix(ct, "application/json"):
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+	default:
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		req.SurveyID = r.FormValue("survey_id")
+		req.Answers = r.FormValue("answers")
+	}
+
+	if !slugRe.MatchString(req.SurveyID) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Answers == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// Validate each answer slug
+	for _, a := range strings.Split(req.Answers, ",") {
+		a = strings.TrimSpace(a)
+		if !slugRe.MatchString(a) {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if err := s.store.UpsertSurvey(req.SurveyID, req.Answers); err != nil {
+		log.Printf("admin create: survey_id=%s err=%v", req.SurveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+// surveyIDFromPath extracts the survey ID from the URL path for admin
+// routes. Both /admin/surveys/{id} and /admin/surveys/{id}/reset have
+// the ID at the 4th path segment (index 3 after splitting). We parse
+// manually rather than using r.PathValue because the tests call handlers
+// directly without going through the mux.
+func surveyIDFromPath(r *http.Request) string {
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		return ""
+	}
+	return parts[3]
+}
+
+// handleAdminReset clears all votes for a survey while preserving the survey
+// registration (allowed_answers). Protected by Bearer token auth.
+func (s *Server) handleAdminReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.validAdminToken(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	surveyID := surveyIDFromPath(r)
+	if !slugRe.MatchString(surveyID) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.ResetVotes(surveyID); err != nil {
+		log.Printf("admin reset: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleAdminDelete fully removes a survey: all votes and the registration
+// itself. Protected by Bearer token auth.
+func (s *Server) handleAdminDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.validAdminToken(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	surveyID := surveyIDFromPath(r)
+	if !slugRe.MatchString(surveyID) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.DeleteSurvey(surveyID); err != nil {
+		log.Printf("admin delete: survey_id=%s err=%v", surveyID, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // publicBaseURL returns the scheme+host that an external client used to reach
