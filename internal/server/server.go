@@ -38,8 +38,8 @@ const (
 	routeHome          = "/{$}"                  // root explainer page; {$} anchors to "/" only so /{id} stays distinct
 	routeThanks        = "/thanks"
 	routeHealth        = "/healthz"
-	routeStyle         = "/style.css"    // shared CSS for thanks.html + result.html
-	routeOGImage       = "/og-image.png"  // social-card image for landing.html + result.html
+	routeStyle         = "/style.css"      // shared CSS for thanks.html + result.html
+	routeOGImage       = "/og-image.png"   // social-card image for landing.html + result.html
 	routeOGImage2      = "/og-image-q.png" // social-card image for home.html (root /)
 )
 
@@ -105,13 +105,13 @@ func isBotUA(ua string) bool {
 }
 
 type Server struct {
-	cfg     Config
-	store   *store.Store
-	salt    *voter.Salt
-	thanks  *template.Template
-	result  *template.Template
-	landing *template.Template
-	home    *template.Template
+	cfg      Config
+	store    *store.Store
+	salt     *voter.Salt
+	thanks   *template.Template
+	result   *template.Template
+	landing  *template.Template
+	home     *template.Template
 	css      []byte // cached at startup, served from routeStyle
 	ogImage  []byte // cached at startup, served from routeOGImage
 	ogImage2 []byte // cached at startup, served from routeOGImage2 (home page card)
@@ -279,10 +279,10 @@ func (s *Server) handleOGImage2(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleThanks(w http.ResponseWriter, r *http.Request) {
 	data := struct {
-		SiteURL   string
+		SiteURL  string
 		SurveyID string
 	}{
-		SiteURL:   s.cfg.SiteURL,
+		SiteURL:  s.cfg.SiteURL,
 		SurveyID: r.URL.Query().Get("id"),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
