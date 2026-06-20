@@ -152,7 +152,9 @@ func New(cfg Config, st *store.Store) *Server {
 	}
 }
 
-func (s *Server) ListenAndServe() error {
+// Handler returns the http.Handler with all routes registered.
+// Separate from ListenAndServe so tests can pass the mux to httptest.Server.
+func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	// Order doesn't matter for Go 1.22 ServeMux — more specific patterns
 	// always win. /result/{id} beats /{id}/{answer} for paths under /result/.
@@ -174,10 +176,13 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc(routeHealth, func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})
+	return mux
+}
 
+func (s *Server) ListenAndServe() error {
 	httpServer := &http.Server{
 		Addr:              s.cfg.HTTPAddr,
-		Handler:           mux,
+		Handler:           s.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
