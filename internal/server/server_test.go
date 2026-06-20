@@ -691,12 +691,9 @@ func TestAdminListSurveysEmpty(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	var items []any
-	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(items) != 0 {
-		t.Fatalf("expected [] for empty store, got %d items", len(items))
+	body := strings.TrimSpace(rec.Body.String())
+	if body != "[]" {
+		t.Fatalf("expected body '[]', got %q", body)
 	}
 }
 
@@ -769,6 +766,27 @@ func TestAdminDetailSurveyNotFound(t *testing.T) {
 	s.handleAdminDetail(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAdminDetailSurveyUnauthorized(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// No auth header
+	req := httptest.NewRequest(http.MethodGet, "/admin/surveys/some-poll", nil)
+	rec := httptest.NewRecorder()
+	s.handleAdminDetail(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no auth: status = %d, want 401", rec.Code)
+	}
+
+	// Wrong token
+	req2 := httptest.NewRequest(http.MethodGet, "/admin/surveys/some-poll", nil)
+	req2.Header.Set("Authorization", "Bearer wrong-token")
+	rec2 := httptest.NewRecorder()
+	s.handleAdminDetail(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", rec2.Code)
 	}
 }
 
