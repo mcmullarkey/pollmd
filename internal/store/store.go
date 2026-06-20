@@ -118,7 +118,7 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // RecordVote records a vote for a survey answer. voterName is optional —
 // pass "" for anonymous mode. If the voter has already voted, their answer
-// is updated and the old name is preserved if the new name is empty.
+// is updated and the voter_name is updated to the new name if non-empty.
 func (s *Store) RecordVote(surveyID, answer, voter, voterName string) error {
 	// On conflict, set the timestamp with now() rather than relying on
 	// excluded.ts. Using CURRENT_TIMESTAMP here trips DuckDB's binder
