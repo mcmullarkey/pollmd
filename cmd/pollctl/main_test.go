@@ -210,3 +210,84 @@ func TestPollctlResultNotFound(t *testing.T) {
 		t.Errorf("expected 'not found', got: %s", errOut.String())
 	}
 }
+
+func TestPollctlResetDeclined(t *testing.T) {
+	_, srv, token := newTestServer(t)
+	defer srv.Close()
+
+	// Create survey first
+	Run([]string{"create", "--answers", "a", "decline-test"}, &bytes.Buffer{}, &bytes.Buffer{}, strings.NewReader(""), srv.URL, token)
+
+	// Send "n" to decline confirmation
+	var out, errOut bytes.Buffer
+	code := Run([]string{"reset", "decline-test"}, &out, &errOut, strings.NewReader("n\n"), srv.URL, token)
+	if code != 0 {
+		t.Fatalf("declined reset: exit %d, want 0\nstderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Canceled") {
+		t.Errorf("expected 'Canceled', got: %s", out.String())
+	}
+}
+
+func TestPollctlResetAccepted(t *testing.T) {
+	_, srv, token := newTestServer(t)
+	defer srv.Close()
+
+	Run([]string{"create", "--answers", "a", "accept-test"}, &bytes.Buffer{}, &bytes.Buffer{}, strings.NewReader(""), srv.URL, token)
+
+	// Send "y" to accept confirmation
+	var out, errOut bytes.Buffer
+	code := Run([]string{"reset", "accept-test"}, &out, &errOut, strings.NewReader("y\n"), srv.URL, token)
+	if code != 0 {
+		t.Fatalf("accepted reset: exit %d, want 0\nstderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "reset") {
+		t.Errorf("expected 'reset' in output, got: %s", out.String())
+	}
+}
+
+func TestPollctlDeleteDeclined(t *testing.T) {
+	_, srv, token := newTestServer(t)
+	defer srv.Close()
+
+	Run([]string{"create", "--answers", "a", "del-decline"}, &bytes.Buffer{}, &bytes.Buffer{}, strings.NewReader(""), srv.URL, token)
+
+	var out, errOut bytes.Buffer
+	code := Run([]string{"delete", "del-decline"}, &out, &errOut, strings.NewReader("n\n"), srv.URL, token)
+	if code != 0 {
+		t.Fatalf("declined delete: exit %d, want 0\nstderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Canceled") {
+		t.Errorf("expected 'Canceled', got: %s", out.String())
+	}
+}
+
+func TestPollctlDeleteAccepted(t *testing.T) {
+	_, srv, token := newTestServer(t)
+	defer srv.Close()
+
+	Run([]string{"create", "--answers", "a", "del-accept"}, &bytes.Buffer{}, &bytes.Buffer{}, strings.NewReader(""), srv.URL, token)
+
+	var out, errOut bytes.Buffer
+	code := Run([]string{"delete", "del-accept"}, &out, &errOut, strings.NewReader("y\n"), srv.URL, token)
+	if code != 0 {
+		t.Fatalf("accepted delete: exit %d, want 0\nstderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "deleted") {
+		t.Errorf("expected 'deleted' in output, got: %s", out.String())
+	}
+}
+
+func TestPollctlCreateMissingAnswers(t *testing.T) {
+	_, srv, token := newTestServer(t)
+	defer srv.Close()
+
+	var out, errOut bytes.Buffer
+	code := Run([]string{"create", "missing-answers"}, &out, &errOut, strings.NewReader(""), srv.URL, token)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "--answers is required") {
+		t.Errorf("expected '--answers is required', got: %s", errOut.String())
+	}
+}
