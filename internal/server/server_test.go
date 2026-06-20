@@ -69,6 +69,16 @@ func TestHandleHomeGet(t *testing.T) {
 			t.Errorf("GET / body missing %q", want)
 		}
 	}
+	for _, unwanted := range []string{
+		"newsletter",
+		"Newsletter",
+		"ssp.sh/brain/logo",
+		"sspaeti.com logo",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("GET / body contains unwanted %q", unwanted)
+		}
+	}
 }
 
 func TestHandleHomeHead(t *testing.T) {
@@ -82,6 +92,38 @@ func TestHandleHomeHead(t *testing.T) {
 	}
 	if rec.Body.Len() != 0 {
 		t.Errorf("HEAD / wrote %d bytes, want 0", rec.Body.Len())
+	}
+}
+
+func TestHandleThanks(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/thanks?id=test", nil)
+	rec := httptest.NewRecorder()
+	s.handleThanks(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /thanks status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Thanks for your vote",
+		"pollmd",
+		"Back to site",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /thanks body missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"newsletter",
+		"Newsletter",
+		"ssp.sh/brain/logo",
+		"sspaeti.com logo",
+		"Back to the blog",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("GET /thanks body contains unwanted %q", unwanted)
+		}
 	}
 }
 
