@@ -43,8 +43,10 @@ CREATE TABLE IF NOT EXISTS surveys (
 var tokenSafe = regexp.MustCompile(`^[A-Za-z0-9+/=_-]+$`)
 
 func Open(path, quackAddr, quackToken string) (_ *Store, err error) {
-	if !tokenSafe.MatchString(quackToken) {
-		return nil, fmt.Errorf("SURVEY_QUACK_TOKEN must be URL-safe base64")
+	if quackAddr != "" {
+		if !tokenSafe.MatchString(quackToken) {
+			return nil, fmt.Errorf("SURVEY_QUACK_TOKEN must be URL-safe base64")
+		}
 	}
 
 	db, err := sql.Open("duckdb", path)
@@ -70,27 +72,29 @@ func Open(path, quackAddr, quackToken string) (_ *Store, err error) {
 		return nil, fmt.Errorf("schema surveys: %w", err)
 	}
 
-	// Quack ships via the `core` extension repo from DuckDB 1.5.3 onwards.
-	// Earlier versions (1.5.2 etc.) had it in `core_nightly` — this code requires
-	// 1.5.3+, which is what duckdb-go-bindings/v2 v0.10503.x bundles for
-	// linux/darwin/windows. The first `INSTALL` call needs outbound HTTPS to
-	// extensions.duckdb.org to fetch the .duckdb_extension file.
-	if _, err = db.Exec(`INSTALL quack`); err != nil {
-		return nil, fmt.Errorf("install quack (need DuckDB 1.5.3+ and outbound HTTPS): %w", err)
-	}
-	if _, err = db.Exec(`LOAD quack`); err != nil {
-		return nil, fmt.Errorf("load quack: %w", err)
-	}
+	if quackAddr != "" {
+		// Quack ships via the `core` extension repo from DuckDB 1.5.3 onwards.
+		// Earlier versions (1.5.2 etc.) had it in `core_nightly` — this code
+		// requires 1.5.3+, which is what duckdb-go-bindings/v2 v0.10503.x
+		// bundles for linux/darwin/windows. The first `INSTALL` call needs
+		// outbound HTTPS to extensions.duckdb.org to fetch the extension file.
+		if _, err = db.Exec(`INSTALL quack`); err != nil {
+			return nil, fmt.Errorf("install quack (need DuckDB 1.5.3+ and outbound HTTPS): %w", err)
+		}
+		if _, err = db.Exec(`LOAD quack`); err != nil {
+			return nil, fmt.Errorf("load quack: %w", err)
+		}
 
-	// quack_serve takes named args via `=>`. The Go driver doesn't bind named
-	// params, so we interpolate after validating both inputs above.
-	quackURI := fmt.Sprintf("quack:%s", quackAddr)
-	serveSQL := fmt.Sprintf(
-		"CALL quack_serve('%s', token => '%s', allow_other_hostname => true)",
-		quackURI, quackToken,
-	)
-	if _, err = db.Exec(serveSQL); err != nil {
-		return nil, fmt.Errorf("quack_serve: %w", err)
+		// quack_serve takes named args via `=>`. The Go driver doesn't bind
+		// named params, so we interpolate after validating both inputs above.
+		quackURI := fmt.Sprintf("quack:%s", quackAddr)
+		serveSQL := fmt.Sprintf(
+			"CALL quack_serve('%s', token => '%s', allow_other_hostname => true)",
+			quackURI, quackToken,
+		)
+		if _, err = db.Exec(serveSQL); err != nil {
+			return nil, fmt.Errorf("quack_serve: %w", err)
+		}
 	}
 
 	return &Store{db: db}, nil
