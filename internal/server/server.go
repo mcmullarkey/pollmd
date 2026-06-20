@@ -19,7 +19,7 @@ type Config struct {
 	HTTPAddr   string
 	QuackAddr  string
 	QuackToken string
-	BlogURL    string
+	SiteURL    string
 }
 
 //go:embed thanks.html result.html landing.html home.html style.css ogimage.png ogimage-q.png
@@ -31,15 +31,15 @@ var staticFS embed.FS
 // r.PathValue("answer") pull the segments inside the handler.
 const (
 	routeVote          = "/{id}/{answer}"        // primary, short form (e.g. q.ssp.sh/init/awesome)
-	routeVoteLegacy    = "/survey/{id}/{answer}" // kept so old newsletter links keep working
+	routeVoteLegacy    = "/survey/{id}/{answer}" // kept so old survey links keep working
 	routeResult        = "/result/{id}"          // server-rendered tally page
 	routeLanding       = "/{id}"                 // landing page with answer buttons for registered surveys
 	routeLandingLegacy = "/survey/{id}"          // alias matching the explicit /survey/ form the user might type
 	routeHome          = "/{$}"                  // root explainer page; {$} anchors to "/" only so /{id} stays distinct
 	routeThanks        = "/thanks"
 	routeHealth        = "/healthz"
-	routeStyle         = "/style.css"    // shared CSS for thanks.html + result.html
-	routeOGImage       = "/og-image.png"  // social-card image for landing.html + result.html
+	routeStyle         = "/style.css"      // shared CSS for thanks.html + result.html
+	routeOGImage       = "/og-image.png"   // social-card image for landing.html + result.html
 	routeOGImage2      = "/og-image-q.png" // social-card image for home.html (root /)
 )
 
@@ -105,13 +105,13 @@ func isBotUA(ua string) bool {
 }
 
 type Server struct {
-	cfg     Config
-	store   *store.Store
-	salt    *voter.Salt
-	thanks  *template.Template
-	result  *template.Template
-	landing *template.Template
-	home    *template.Template
+	cfg      Config
+	store    *store.Store
+	salt     *voter.Salt
+	thanks   *template.Template
+	result   *template.Template
+	landing  *template.Template
+	home     *template.Template
 	css      []byte // cached at startup, served from routeStyle
 	ogImage  []byte // cached at startup, served from routeOGImage
 	ogImage2 []byte // cached at startup, served from routeOGImage2 (home page card)
@@ -279,10 +279,10 @@ func (s *Server) handleOGImage2(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleThanks(w http.ResponseWriter, r *http.Request) {
 	data := struct {
-		BlogURL  string
+		SiteURL  string
 		SurveyID string
 	}{
-		BlogURL:  s.cfg.BlogURL,
+		SiteURL:  s.cfg.SiteURL,
 		SurveyID: r.URL.Query().Get("id"),
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -304,7 +304,7 @@ type resultPageData struct {
 	SurveyID      string
 	Tallies       []tallyRow
 	TotalVotes    int
-	BlogURL       string
+	SiteURL       string
 	PageURL       string // absolute URL of this result page, for og:url
 	OGImageURL    string // absolute URL of the social-card image, for og:image
 	OGTitle       string
@@ -355,11 +355,11 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 		SurveyID:      surveyID,
 		Tallies:       view,
 		TotalVotes:    total,
-		BlogURL:       s.cfg.BlogURL,
+		SiteURL:       s.cfg.SiteURL,
 		PageURL:       base + r.URL.Path,
 		OGImageURL:    base + routeOGImage,
 		OGTitle:       "Survey results: " + surveyID,
-		OGDescription: "Live tally of newsletter reader ratings for " + surveyID + ".",
+		OGDescription: "Live tally of poll responses for " + surveyID + ".",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -429,7 +429,7 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 		PageURL:       base + r.URL.Path,
 		OGImageURL:    base + routeOGImage,
 		OGTitle:       "Vote: " + surveyID,
-		OGDescription: "One click to record your rating for newsletter " + surveyID + ".",
+		OGDescription: "One click to record your vote for poll " + surveyID + ".",
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -482,8 +482,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	data := homePageData{
 		PageURL:       base + "/",
 		OGImageURL:    base + routeOGImage2,
-		OGTitle:       "pollmd — minimal newsletter polls in Markdown",
-		OGDescription: "A ~200-line Go service that records anonymous newsletter reader ratings into a DuckDB file. No cookies, no JS.",
+		OGTitle:       "pollmd — minimal polls in Markdown",
+		OGDescription: "A ~200-line Go service that records anonymous poll responses into a DuckDB file. No cookies, no JS.",
 		DocsURL:       homeDocsURL,
 		GitHubURL:     homeGitHubURL,
 	}

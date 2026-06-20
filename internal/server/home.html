@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>pollmd &mdash; minimal newsletter polls in Markdown</title>
+<title>pollmd</title>
 <meta name="description" content="{{.OGDescription}}">
 
 <meta property="og:title" content="{{.OGTitle}}">
@@ -25,15 +25,14 @@
 <body>
   <main class="card">
     <div class="hero">
-      <img class="logo" src="https://www.ssp.sh/brain/logo_ssp_main.png" alt="sspaeti.com logo">
       <h1>pollmd</h1>
-      <p class="subtitle">Minimal newsletter polls in Markdown.</p>
+      <p class="subtitle">Minimal polls in Markdown.</p>
     </div>
 
     <p>
-      A ~200-line Go service that records anonymous reader ratings into a
+      A ~200-line Go service that records anonymous poll responses into a
       single <a href="https://ssp.sh/brain/duckdb">DuckDB</a> file.
-      Per-newsletter, per-answer, no cookies, no JS. Query the results
+      Per-poll, per-answer, no cookies, no JS. Query the results
       from your laptop over <a href="https://www.ssp.sh/brain/quack-protocol-duckdb">Quack</a>.
     </p>
 
