@@ -19,12 +19,16 @@ type Store struct {
 // means "open mode" (any slug-valid answer counts). Populated via the
 // `make survey-create` target which writes through Quack with the same
 // SURVEY_QUACK_TOKEN as `survey-reset`.
+//
+// The voter_name column supports per-survey named-voting mode. Default
+// mode is "anonymous" (voter_name is empty string, not stored).
 const schemaVotes = `
 CREATE TABLE IF NOT EXISTS votes (
     ts        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     survey_id VARCHAR   NOT NULL,
     answer    VARCHAR   NOT NULL,
     voter     VARCHAR   NOT NULL,
+    voter_name VARCHAR,
     PRIMARY KEY (survey_id, voter)
 );
 `
@@ -33,7 +37,8 @@ const schemaSurveys = `
 CREATE TABLE IF NOT EXISTS surveys (
     survey_id       VARCHAR   PRIMARY KEY,
     allowed_answers VARCHAR   NOT NULL,
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    mode            VARCHAR   DEFAULT 'anonymous'
 );
 `
 
@@ -72,6 +77,15 @@ func Open(path, quackAddr, quackToken string) (_ *Store, err error) {
 		return nil, fmt.Errorf("schema surveys: %w", err)
 	}
 
+	// Migrate existing tables: add columns if not present.
+	// Safe to run on fresh databases (columns already exist from DDL above).
+	if _, err = db.Exec(`ALTER TABLE votes ADD COLUMN IF NOT EXISTS voter_name VARCHAR`); err != nil {
+		return nil, fmt.Errorf("migrate votes: %w", err)
+	}
+	if _, err = db.Exec(`ALTER TABLE surveys ADD COLUMN IF NOT EXISTS mode VARCHAR DEFAULT 'anonymous'`); err != nil {
+		return nil, fmt.Errorf("migrate surveys: %w", err)
+	}
+
 	if quackAddr != "" {
 		// Quack ships via the `core` extension repo from DuckDB 1.5.3 onwards.
 		// Earlier versions (1.5.2 etc.) had it in `core_nightly` — this code
@@ -102,16 +116,20 @@ func Open(path, quackAddr, quackToken string) (_ *Store, err error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) RecordVote(surveyID, answer, voter string) error {
+// RecordVote records a vote for a survey answer. voterName is optional —
+// pass "" for anonymous mode. If the voter has already voted, their answer
+// is updated and the old name is preserved if the new name is empty.
+func (s *Store) RecordVote(surveyID, answer, voter, voterName string) error {
 	// On conflict, set the timestamp with now() rather than relying on
 	// excluded.ts. Using CURRENT_TIMESTAMP here trips DuckDB's binder
 	// (it treats it as a column name in SET lists); now() works reliably.
+	// COALESCE on voter_name means an empty name preserves the existing name.
 	const q = `
-        INSERT INTO votes (survey_id, answer, voter) VALUES (?, ?, ?)
+        INSERT INTO votes (survey_id, answer, voter, voter_name) VALUES (?, ?, ?, ?)
         ON CONFLICT (survey_id, voter) DO UPDATE
-        SET answer = excluded.answer, ts = now()
+        SET answer = excluded.answer, ts = now(), voter_name = COALESCE(excluded.voter_name, voter_name)
     `
-	_, err := s.db.Exec(q, surveyID, answer, voter)
+	_, err := s.db.Exec(q, surveyID, answer, voter, voterName)
 	return err
 }
 
@@ -161,16 +179,41 @@ func (s *Store) GetAllowedAnswers(surveyID string) (map[string]bool, error) {
 	return out, nil
 }
 
+// GetSurveyMode returns the voting mode for a survey: "anonymous" or "named".
+// Unregistered surveys default to "anonymous". Pre-migration rows with a NULL
+// mode value are also treated as "anonymous".
+func (s *Store) GetSurveyMode(surveyID string) (string, error) {
+	var mode string
+	err := s.db.QueryRow(
+		`SELECT mode FROM surveys WHERE survey_id = ?`,
+		surveyID,
+	).Scan(&mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "anonymous", nil
+	}
+	if err != nil {
+		return "anonymous", err
+	}
+	if mode == "" {
+		return "anonymous", nil
+	}
+	return mode, nil
+}
+
 // UpsertSurvey creates or updates a survey's allowed-answers registration.
-// If the survey_id already exists, the allowed_answers are replaced.
-func (s *Store) UpsertSurvey(surveyID, answers string) error {
+// If the survey_id already exists, the allowed_answers and mode are replaced.
+// An empty mode string defaults to "anonymous".
+func (s *Store) UpsertSurvey(surveyID, answers, mode string) error {
+	if mode == "" {
+		mode = "anonymous"
+	}
 	const q = `
-		INSERT INTO surveys (survey_id, allowed_answers)
-		VALUES (?, ?)
+		INSERT INTO surveys (survey_id, allowed_answers, mode)
+		VALUES (?, ?, ?)
 		ON CONFLICT (survey_id) DO UPDATE
-		SET allowed_answers = excluded.allowed_answers
+		SET allowed_answers = excluded.allowed_answers, mode = excluded.mode
 	`
-	_, err := s.db.Exec(q, surveyID, answers)
+	_, err := s.db.Exec(q, surveyID, answers, mode)
 	return err
 }
 

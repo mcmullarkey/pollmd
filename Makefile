@@ -355,11 +355,14 @@ survey-reset:
 # and logs `answer-reject`. Unregistered surveys stay in open mode.
 #
 #   make survey-create SURVEY_ID=2026-06-15 ANSWERS=awesome,good,better,worse
+#   make survey-create SURVEY_ID=my-poll ANSWERS=a,b,c MODE=named
 #
 # Re-running upserts the row, so editing the answer set is a re-run with
 # new ANSWERS. To remove a survey entirely (registration + votes), run
 # `make survey-delete SURVEY_ID=<id>`. To only drop votes but keep the
 # answer lock in place, run `make survey-reset SURVEY_ID=<id>`.
+#
+# Optional MODE flag: MODE=named|anonymous (default anonymous).
 survey-create:
 	@command -v duckdb >/dev/null || { echo "error: duckdb CLI not on PATH (install duckdb locally first)" >&2; exit 1; }
 	@if [ -z "$$SURVEY_QUACK_TOKEN" ] || [ -z "$$RAILWAY_QUACK_HOST" ] || [ -z "$$RAILWAY_QUACK_PORT" ]; then \
@@ -369,30 +372,35 @@ survey-create:
 	fi
 	@if [ -z "$(SURVEY_ID)" ]; then \
 	    echo "error: SURVEY_ID is required" >&2; \
-	    echo "       usage: make survey-create SURVEY_ID=<id> ANSWERS=a,b,c" >&2; \
+	    echo "       usage: make survey-create SURVEY_ID=<id> ANSWERS=a,b,c [MODE=named]" >&2; \
 	    exit 1; \
 	fi
 	@if [ -z "$(ANSWERS)" ]; then \
-	    echo "error: ANSWERS is required (comma-separated, e.g. awesome,good,better,worse)" >&2; \
+	    echo "error: ANSWERS is required" >&2; \
 	    exit 1; \
 	fi
 	@if ! echo "$(SURVEY_ID)" | grep -qE '^[a-z0-9][a-z0-9_-]{0,63}$$'; then \
 	    echo "error: SURVEY_ID must match ^[a-z0-9][a-z0-9_-]{0,63}\$$" >&2; \
 	    exit 1; \
 	fi
+	@if [ -n "$(MODE)" ] && ! echo "$(MODE)" | grep -qE '^(anonymous|named)$$'; then \
+	    echo "error: MODE must be 'anonymous' or 'named'" >&2; \
+	    exit 1; \
+	fi
 	@for a in $$(echo "$(ANSWERS)" | tr ',' ' '); do \
 	    echo "$$a" | grep -qE '^[a-z0-9][a-z0-9_-]{0,63}$$' || { \
 	        echo "error: invalid answer slug: $$a" >&2; \
-	        echo "       answers must match ^[a-z0-9][a-z0-9_-]{0,63}\$$" >&2; \
 	        exit 1; \
 	    }; \
 	done
-	@tmp=$$(mktemp) && trap "rm -f $$tmp" EXIT INT TERM HUP && \
+	@mode_val=$${MODE:-anonymous}; \
+	tmp=$$(mktemp) && trap "rm -f $$tmp" EXIT INT TERM HUP && \
 	  printf "INSTALL quack;\nLOAD quack;\nCREATE OR REPLACE MACRO rq(sql) AS TABLE (FROM quack_query('quack:%s:%s', sql, token => '%s', disable_ssl => true));\n" \
 	    "$$RAILWAY_QUACK_HOST" "$$RAILWAY_QUACK_PORT" "$$SURVEY_QUACK_TOKEN" > "$$tmp" && \
 	  echo "" && \
 	  echo "Registering survey_id='$(SURVEY_ID)' with allowed answers: $(ANSWERS)" && \
-	  duckdb -init "$$tmp" -c "FROM rq('INSERT INTO surveys (survey_id, allowed_answers) VALUES (''$(SURVEY_ID)'', ''$(ANSWERS)'') ON CONFLICT (survey_id) DO UPDATE SET allowed_answers = excluded.allowed_answers RETURNING *');" && \
+	  echo "Mode: $$mode_val" && \
+	  duckdb -init "$$tmp" -c "FROM rq('INSERT INTO surveys (survey_id, allowed_answers, mode) VALUES (''$(SURVEY_ID)'', ''$(ANSWERS)'', ''$$mode_val'') ON CONFLICT (survey_id) DO UPDATE SET allowed_answers = excluded.allowed_answers, mode = excluded.mode RETURNING *');" && \
 	  echo "" && \
 	  echo "Landing page (share this URL):" && \
 	  echo "  $(PUBLIC_URL)/$(SURVEY_ID)" && \

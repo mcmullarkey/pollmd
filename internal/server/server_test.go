@@ -130,6 +130,85 @@ func TestHandleThanks(t *testing.T) {
 	}
 }
 
+// TestNamedModeVote verifies that a named-mode survey captures the voter name
+// from the ?name= query parameter and redirects to the thanks page.
+func TestNamedModeVote(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Create a named-mode survey via the admin endpoint with mode field
+	body := strings.NewReader(url.Values{
+		"survey_id": {"named-poll"},
+		"answers":   {"a,b"},
+		"mode":      {"named"},
+	}.Encode())
+	req := httptest.NewRequest(http.MethodPost, "/admin/surveys", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer test-token")
+	rec := httptest.NewRecorder()
+	s.handleAdminCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: status=%d, want 201", rec.Code)
+	}
+
+	// Vote with name param. Set path values since we call handleSurvey
+	// directly without going through the mux.
+	voteReq := httptest.NewRequest(http.MethodGet, "/named-poll/a?name=Mallory", nil)
+	voteReq.Header.Set("User-Agent", "Mozilla/5.0")
+	voteReq.SetPathValue("id", "named-poll")
+	voteReq.SetPathValue("answer", "a")
+	voteRec := httptest.NewRecorder()
+	s.handleSurvey(voteRec, voteReq)
+	if voteRec.Code != http.StatusFound {
+		t.Fatalf("vote: status=%d, want 302", voteRec.Code)
+	}
+
+	// Verify redirect to thanks page
+	loc := voteRec.Header().Get("Location")
+	if !strings.Contains(loc, "/thanks?id=named-poll") {
+		t.Fatalf("unexpected redirect location: %s", loc)
+	}
+}
+
+// TestNamedModeVoteLongName verifies that names over 200 chars return 400.
+func TestNamedModeVoteLongName(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Create a named-mode survey
+	s.store.UpsertSurvey("name-limit", "a,b", "named")
+
+	// Vote with a very long name
+	longName := strings.Repeat("x", 201)
+	voteReq := httptest.NewRequest(http.MethodGet, "/name-limit/a?name="+longName, nil)
+	voteReq.Header.Set("User-Agent", "Mozilla/5.0")
+	voteReq.SetPathValue("id", "name-limit")
+	voteReq.SetPathValue("answer", "a")
+	voteRec := httptest.NewRecorder()
+	s.handleSurvey(voteRec, voteReq)
+	if voteRec.Code != http.StatusBadRequest {
+		t.Fatalf("long name: status=%d, want 400", voteRec.Code)
+	}
+}
+
+// TestNamedModeVoteBotSkip verifies that bots get 200 without recording a vote,
+// even when a name is provided.
+func TestNamedModeVoteBotSkip(t *testing.T) {
+	s := newTestServerWithStore(t, "test-token")
+
+	// Create a named-mode survey
+	s.store.UpsertSurvey("bot-test", "a,b", "named")
+
+	// Bot UA with name param
+	voteReq := httptest.NewRequest(http.MethodGet, "/bot-test/a?name=Mallory", nil)
+	voteReq.Header.Set("User-Agent", "Twitterbot/1.0")
+	voteReq.SetPathValue("id", "bot-test")
+	voteReq.SetPathValue("answer", "a")
+	voteRec := httptest.NewRecorder()
+	s.handleSurvey(voteRec, voteReq)
+	if voteRec.Code != http.StatusOK {
+		t.Fatalf("bot vote: status=%d, want 200", voteRec.Code)
+	}
+}
+
 // TestHomeRouteDoesNotShadow pins the {$} anchor on routeHome. With Go 1.22
 // pattern matching, "/{$}" matches /only. Without the anchor, "/" would also
 // match every other path that no longer-specific pattern claims. We register
@@ -360,9 +439,9 @@ func TestAdminReset(t *testing.T) {
 	s := newTestServerWithStore(t, "test-token")
 
 	// Create a survey with a vote
-	s.store.UpsertSurvey("reset-test", "a,b")
-	s.store.RecordVote("reset-test", "a", "voter1")
-	s.store.RecordVote("reset-test", "b", "voter2")
+	s.store.UpsertSurvey("reset-test", "a,b", "")
+	s.store.RecordVote("reset-test", "a", "voter1", "")
+	s.store.RecordVote("reset-test", "b", "voter2", "")
 
 	// Reset
 	req := httptest.NewRequest(http.MethodPost, "/admin/surveys/reset-test/reset", nil)
@@ -389,8 +468,8 @@ func TestAdminReset(t *testing.T) {
 func TestAdminDelete(t *testing.T) {
 	s := newTestServerWithStore(t, "test-token")
 
-	s.store.UpsertSurvey("delete-test", "a")
-	s.store.RecordVote("delete-test", "a", "voter1")
+	s.store.UpsertSurvey("delete-test", "a", "")
+	s.store.RecordVote("delete-test", "a", "voter1", "")
 
 	req := httptest.NewRequest(http.MethodDelete, "/admin/surveys/delete-test", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
