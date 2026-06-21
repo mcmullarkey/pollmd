@@ -12,7 +12,7 @@ deploy/survey.env.example
 *.duckdb.wal
 *.duckdb.tmp
 .DS_Store
-README.md
-CLAUDE.md
+screenshots/
+*.md
 LICENSE
 Makefile
