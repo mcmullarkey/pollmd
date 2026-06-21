@@ -16,6 +16,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /var/db/survey /var/data
 COPY --from=build /out/survey /usr/local/bin/survey
 EXPOSE 10000
 ENTRYPOINT ["/usr/local/bin/survey"]
